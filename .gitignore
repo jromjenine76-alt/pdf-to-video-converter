@@ -51,12 +51,18 @@ ENV/
 env/
 .venv
 
+# Secrets (never commit API keys)
+.env
+.env.*
+!.env.example
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.ipynb_checkpoints/
 
 # Output files
 output/
