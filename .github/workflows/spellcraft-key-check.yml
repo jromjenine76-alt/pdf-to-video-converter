@@ -23,3 +23,5 @@ jobs:
             echo "OPENAI_API_KEY_PRESENT=false"
             echo "::warning::OPENAI_API_KEY is not configured for this repository."
           fi
+
+# verification trigger
