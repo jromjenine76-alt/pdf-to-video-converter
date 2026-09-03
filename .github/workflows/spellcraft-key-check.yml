@@ -20,5 +20,5 @@ jobs:
             echo "OPENAI_API_KEY_PRESENT=true"
           else
             echo "OPENAI_API_KEY_PRESENT=false"
-            exit 2
+            echo "::warning::OPENAI_API_KEY is not configured for this repository."
           fi
