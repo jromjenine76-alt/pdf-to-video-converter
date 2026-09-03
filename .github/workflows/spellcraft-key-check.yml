@@ -10,6 +10,7 @@ on:
 jobs:
   check-key:
     runs-on: ubuntu-latest
+    permissions: {}
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
