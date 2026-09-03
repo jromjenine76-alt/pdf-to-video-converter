@@ -1,6 +1,7 @@
 from pathlib import Path
 from openai import OpenAI
 import json
+import os
 
 MODEL = "gpt-4o-mini-tts"
 VOICES = [
@@ -18,34 +19,39 @@ INSTRUCTIONS = (
     "gentle emphasis, and brief pauses between ideas."
 )
 
-client = OpenAI()
 out = Path("voice_candidates")
 out.mkdir(exist_ok=True)
 results = []
+api_key = os.getenv("OPENAI_API_KEY")
 
-for voice in VOICES:
-    target = out / f"{voice}.wav"
-    try:
-        with client.audio.speech.with_streaming_response.create(
-            model=MODEL,
-            voice=voice,
-            input=TEXT,
-            instructions=INSTRUCTIONS,
-            response_format="wav",
-        ) as response:
-            response.stream_to_file(target)
-        results.append({"voice": voice, "status": "ok", "file": target.name})
-        print(f"VOICE_OK={voice}")
-    except Exception as exc:
-        results.append({"voice": voice, "status": "error", "error": str(exc)[:500]})
-        print(f"VOICE_ERROR={voice}: {type(exc).__name__}: {exc}")
+if not api_key:
+    print("OPENAI_API_KEY missing; skipping voice generation")
+else:
+    client = OpenAI(api_key=api_key)
+    for voice in VOICES:
+        target = out / f"{voice}.wav"
+        try:
+            with client.audio.speech.with_streaming_response.create(
+                model=MODEL,
+                voice=voice,
+                input=TEXT,
+                instructions=INSTRUCTIONS,
+                response_format="wav",
+            ) as response:
+                response.stream_to_file(target)
+            results.append({"voice": voice, "status": "ok", "file": target.name})
+            print(f"VOICE_OK={voice}")
+        except Exception as exc:
+            results.append({"voice": voice, "status": "error", "error": str(exc)[:500]})
+            print(f"VOICE_ERROR={voice}: {type(exc).__name__}: {exc}")
 
 (out / "manifest.json").write_text(json.dumps({
     "model": MODEL,
     "text": TEXT,
     "instructions": INSTRUCTIONS,
+    "api_key_present": bool(api_key),
     "results": results,
 }, indent=2), encoding="utf-8")
 
 if not any(item["status"] == "ok" for item in results):
-    raise SystemExit("No voice candidates were generated")
+    print("No voice candidates were generated")

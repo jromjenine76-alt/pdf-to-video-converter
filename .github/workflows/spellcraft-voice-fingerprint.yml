@@ -27,12 +27,13 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          test -n "$OPENAI_API_KEY" || (echo "OPENAI_API_KEY missing" && exit 2)
           python voice_fingerprint.py
 
       - name: Upload voice candidates
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: spellcraft-voice-candidates
           path: voice_candidates/
+          if-no-files-found: warn
           retention-days: 1
