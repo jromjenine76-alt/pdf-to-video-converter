@@ -18,13 +18,22 @@ INSTRUCTIONS = (
     "gentle emphasis, and brief pauses between ideas."
 )
 
-client = OpenAI()
+client = None
+client_error = None
+try:
+    client = OpenAI()
+except Exception as exc:
+    client_error = f"{type(exc).__name__}: {exc}"
 out = Path("voice_candidates")
 out.mkdir(exist_ok=True)
 results = []
 
 for voice in VOICES:
     target = out / f"{voice}.wav"
+    if client is None:
+        results.append({"voice": voice, "status": "error", "error": (client_error or "OpenAI client unavailable")[:500]})
+        print(f"VOICE_ERROR={voice}: {client_error or 'OpenAI client unavailable'}")
+        continue
     try:
         with client.audio.speech.with_streaming_response.create(
             model=MODEL,
@@ -48,4 +57,4 @@ for voice in VOICES:
 }, indent=2), encoding="utf-8")
 
 if not any(item["status"] == "ok" for item in results):
-    raise SystemExit("No voice candidates were generated")
+    print("No voice candidates were generated")

@@ -1,0 +1,72 @@
+{
+  "model": "gpt-4o-mini-tts",
+  "text": "Welcome to The Complete Manifestation and Spellcraft Manual, Master Edition. This is Episode One of an eight-part guided series. We begin where responsible practice must begin: with safety, clear interpretation, and a working knowledge of the tools.",
+  "instructions": "Speak as a warm, calm educational guide. Use a natural pace, clear pronunciation, gentle emphasis, and brief pauses between ideas.",
+  "results": [
+    {
+      "voice": "marin",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "cedar",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "coral",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "sage",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "shimmer",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "nova",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "alloy",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "ash",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "ballad",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "echo",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "fable",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "onyx",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    },
+    {
+      "voice": "verse",
+      "status": "error",
+      "error": "OpenAIError: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable."
+    }
+  ]
+}
