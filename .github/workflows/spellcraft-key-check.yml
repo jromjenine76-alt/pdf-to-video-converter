@@ -2,20 +2,18 @@ name: Spellcraft Key Check
 
 on:
   push:
-    branches:
-      - spellcraft-voice-bridge
-    paths:
-      - '.github/workflows/spellcraft-key-check.yml'
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   check-key:
     runs-on: ubuntu-latest
     permissions: {}
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - name: Check OpenAI key availability
         shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           if [ -n "$OPENAI_API_KEY" ]; then
             echo "OPENAI_API_KEY_PRESENT=true"
