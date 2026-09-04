@@ -1,0 +1,25 @@
+name: Fetch temporary narration
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fetch-narration.yml'
+  workflow_dispatch:
+
+jobs:
+  fetch-audio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download narration
+        run: |
+          curl -L --fail --retry 3 --retry-delay 2 \
+            'https://www.aidocmaker.com/g0/audio?name=12e74329d7a845af84b2dabd5dd115cc' \
+            -o narration.mp3
+          file narration.mp3
+          ls -lh narration.mp3
+      - name: Upload narration artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: narration-audio
+          path: narration.mp3
+          retention-days: 1
