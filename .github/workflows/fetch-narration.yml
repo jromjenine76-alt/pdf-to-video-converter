@@ -10,39 +10,89 @@ jobs:
   fetch-audio:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch saved voiceover data
+      - name: Capture generated narration response
         run: |
-          set -euxo pipefail
-          JSON='https://www.aidocmaker.com/_next/data/build-TfctsWXpff2fKS/g0/audio.json?appCode=g0&name=12e74329d7a845af84b2dabd5dd115cc&search=true'
-          curl -L --fail "$JSON" -o data.json
-          python - <<'PY'
-          import json,re,requests
-          raw=open('data.json','r',errors='ignore').read()
-          print(raw[:8000])
-          urls=re.findall(r'https?://[^"\\ ]+',raw)
-          print('\nURLS:')
-          for u in urls: print(u)
-          ok=False
+          python -m pip install -q selenium requests
+          cat > /tmp/capture.py <<'PY'
+          import time,json,re,base64,requests,os
+          from selenium import webdriver
+          from selenium.webdriver.chrome.options import Options
+          from selenium.webdriver.common.by import By
+
+          page='https://www.aidocmaker.com/g0/audio?name=12e74329d7a845af84b2dabd5dd115cc'
+          opt=Options()
+          opt.add_argument('--headless=new')
+          opt.add_argument('--no-sandbox')
+          opt.add_argument('--disable-dev-shm-usage')
+          opt.add_argument('--autoplay-policy=no-user-gesture-required')
+          opt.set_capability('goog:loggingPrefs', {'performance':'ALL'})
+          d=webdriver.Chrome(options=opt)
+          d.execute_cdp_cmd('Network.enable', {})
+          d.get(page)
+          time.sleep(12)
+          # Try clicking any play/listen/download control.
+          for el in d.find_elements(By.TAG_NAME,'button'):
+              try:
+                  txt=((el.text or '')+' '+(el.get_attribute('aria-label') or '')).lower()
+                  if any(k in txt for k in ['play','listen','download']):
+                      el.click(); time.sleep(5)
+              except Exception:
+                  pass
+          time.sleep(3)
+          logs=d.get_log('performance')
+          responses=[]
+          for entry in logs:
+              try:
+                  msg=json.loads(entry['message'])['message']
+                  if msg['method']!='Network.responseReceived': continue
+                  p=msg['params']; r=p['response']; url=r['url']; mime=r.get('mimeType',''); rid=p['requestId']
+                  if ('modal.run' in url or 'audio' in mime.lower() or 'json' in mime.lower() or 'aidocmaker' in url):
+                      responses.append((rid,url,mime,r.get('status')))
+              except Exception:
+                  pass
+          print('RESPONSES',len(responses))
+          bodies=[]
+          for i,(rid,url,mime,status) in enumerate(responses):
+              print('R',i,status,mime,url)
+              try:
+                  b=d.execute_cdp_cmd('Network.getResponseBody', {'requestId':rid})
+                  data=b.get('body','')
+                  raw=base64.b64decode(data) if b.get('base64Encoded') else data.encode('utf-8','ignore')
+                  open(f'response_{i}.bin','wb').write(raw)
+                  bodies.append((url,mime,raw))
+              except Exception as e:
+                  print('BODYERR',i,e)
+          d.quit()
+
+          # First: direct audio response.
+          for url,mime,raw in bodies:
+              if len(raw)>50000 and ('audio' in mime.lower() or raw[:3]==b'ID3' or raw[:4] in [b'RIFF',b'fLaC']):
+                  open('narration.mp3','wb').write(raw); print('DIRECT AUDIO',url,len(raw)); raise SystemExit(0)
+          # Second: URL embedded in JSON/text response.
+          alltext='\n'.join(raw.decode('utf-8','ignore') for _,_,raw in bodies)
+          open('responses.txt','w').write(alltext)
+          urls=re.findall(r'https?://[^"\\\s<>]+',alltext)
+          print('FOUND URLS')
+          for u in urls: print(u[:1200])
           for u in reversed(urls):
-              if any(x in u.lower() for x in ['.mp3','.wav','.m4a','.aac','storage.googleapis','cloudfront','audio']):
+              u=u.replace('\\u0026','&').replace('&amp;','&')
+              if any(k in u.lower() for k in ['.mp3','.wav','.m4a','.aac','storage.googleapis','cloudfront','audio']):
                   try:
-                      r=requests.get(u,timeout=60,allow_redirects=True)
-                      ct=r.headers.get('content-type','').lower()
-                      print('TRY',u,r.status_code,len(r.content),ct)
-                      if r.ok and len(r.content)>50000 and ('audio' in ct or u.lower().split('?')[0].endswith(('.mp3','.wav','.m4a','.aac'))):
-                          open('narration.mp3','wb').write(r.content)
-                          ok=True
-                          break
+                      rr=requests.get(u,timeout=60,allow_redirects=True)
+                      ct=rr.headers.get('content-type','')
+                      print('TRY',rr.status_code,len(rr.content),ct,u[:300])
+                      if rr.ok and len(rr.content)>50000 and ('audio' in ct.lower() or rr.content[:3]==b'ID3' or rr.content[:4]==b'RIFF'):
+                          open('narration.mp3','wb').write(rr.content); print('URL AUDIO',len(rr.content)); raise SystemExit(0)
                   except Exception as e:
                       print('ERR',e)
-          if not ok:
-              raise SystemExit('No audio URL in saved data')
+          raise SystemExit('Narration audio not captured')
           PY
+          python /tmp/capture.py
           file narration.mp3
           ls -lh narration.mp3
       - name: Upload narration artifact
         uses: actions/upload-artifact@v4
         with:
-          name: narration-audio-json
+          name: narration-audio-captured
           path: narration.mp3
           retention-days: 1
