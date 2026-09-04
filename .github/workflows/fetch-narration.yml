@@ -1,4 +1,4 @@
-name: Fetch temporary narration
+name: Build natural narration
 
 on:
   push:
@@ -7,92 +7,45 @@ on:
   workflow_dispatch:
 
 jobs:
-  fetch-audio:
+  narration:
     runs-on: ubuntu-latest
     steps:
-      - name: Capture generated narration response
+      - name: Generate relaxed neural narration
         run: |
-          python -m pip install -q selenium requests
-          cat > /tmp/capture.py <<'PY'
-          import time,json,re,base64,requests,os
-          from selenium import webdriver
-          from selenium.webdriver.chrome.options import Options
-          from selenium.webdriver.common.by import By
+          python -m pip install -q edge-tts
+          cat > /tmp/make_voice.py <<'PY'
+          import asyncio, edge_tts, pathlib, subprocess
 
-          page='https://www.aidocmaker.com/g0/audio?name=12e74329d7a845af84b2dabd5dd115cc'
-          opt=Options()
-          opt.add_argument('--headless=new')
-          opt.add_argument('--no-sandbox')
-          opt.add_argument('--disable-dev-shm-usage')
-          opt.add_argument('--autoplay-policy=no-user-gesture-required')
-          opt.set_capability('goog:loggingPrefs', {'performance':'ALL'})
-          d=webdriver.Chrome(options=opt)
-          d.execute_cdp_cmd('Network.enable', {})
-          d.get(page)
-          time.sleep(12)
-          # Try clicking any play/listen/download control.
-          for el in d.find_elements(By.TAG_NAME,'button'):
-              try:
-                  txt=((el.text or '')+' '+(el.get_attribute('aria-label') or '')).lower()
-                  if any(k in txt for k in ['play','listen','download']):
-                      el.click(); time.sleep(5)
-              except Exception:
-                  pass
-          time.sleep(3)
-          logs=d.get_log('performance')
-          responses=[]
-          for entry in logs:
-              try:
-                  msg=json.loads(entry['message'])['message']
-                  if msg['method']!='Network.responseReceived': continue
-                  p=msg['params']; r=p['response']; url=r['url']; mime=r.get('mimeType',''); rid=p['requestId']
-                  if ('modal.run' in url or 'audio' in mime.lower() or 'json' in mime.lower() or 'aidocmaker' in url):
-                      responses.append((rid,url,mime,r.get('status')))
-              except Exception:
-                  pass
-          print('RESPONSES',len(responses))
-          bodies=[]
-          for i,(rid,url,mime,status) in enumerate(responses):
-              print('R',i,status,mime,url)
-              try:
-                  b=d.execute_cdp_cmd('Network.getResponseBody', {'requestId':rid})
-                  data=b.get('body','')
-                  raw=base64.b64decode(data) if b.get('base64Encoded') else data.encode('utf-8','ignore')
-                  open(f'response_{i}.bin','wb').write(raw)
-                  bodies.append((url,mime,raw))
-              except Exception as e:
-                  print('BODYERR',i,e)
-          d.quit()
+          parts = [
+          """This walkthrough begins the moment you open the Manifest Your Dreams Seal Kit. Set the box on a clear, heat-safe surface and lay everything out so you can see what you have before you begin. The kit brings together the instruction manual, ritual writing paper, envelopes, fire paper, the green-and-gold fountain pen, a black ink cartridge, wax beads, the wax spoon and warmer, tea candles, the sealing tools, and the decorative pieces shown with the set. Laying everything out first keeps the entire sequence ready before you start writing or melting wax.""",
+          """Start with the fountain pen. Remove the cap, then hold the gold grip section and unscrew the green barrel. In your photos, the pen has a clear converter with a red end already attached to the back of the grip. Because you are using the included black disposable ink cartridge, pull that clear converter straight out. Do not twist the nib section. Now pick up the black cartridge. The narrow clear end is the end that connects to the pen. Line it up straight with the opening at the back of the gold grip and push firmly until it seats and the seal is punctured. Keep the pressure straight instead of twisting the cartridge. Slide the green barrel back over it and screw the barrel on until it is snug. Hold the pen nib-down for about thirty to sixty seconds, then make a few gentle loops on ordinary scratch paper. Once you have a smooth, continuous ink line, the pen is ready.""",
+          """Now move to the writing portion of the ritual. Use the cream ritual paper for the intention you want to preserve, and use the fire paper for the intention you plan to release by burning. Write clearly and keep the wording focused. The kit is built around giving the intention a physical form first: you write it, then decide how you want to seal or release it.""",
+          """Next, choose the seal that matches the kind of intention you are working with. The product material identifies the Seal of Solomon with power and action, while the Sigil of Truth is associated with clarity and alignment. Pick the one that best matches the purpose of what you wrote before you melt the wax.""",
+          """For the wax station, place one of the tea candles beneath the warmer on a stable, heat-safe surface. Put a small amount of wax beads into the spoon and rest the spoon over the heat. Let the wax melt completely. When it is smooth and liquid, pour a small pool of wax onto the envelope flap or onto the area you want to mark. While the wax is still soft, press the chosen seal straight down into it. Hold it still for a moment, then lift the stamp straight up and allow the wax to cool before handling the envelope.""",
+          """The kit then gives you two different physical endings. The fire-paper step is the release portion. Take the written fire paper to a fire-safe area, keep it away from loose paper, hair, sleeves, and anything flammable, and ignite it carefully. The paper burns quickly, so keep your hand clear and let the release happen over a safe surface. This is the part of the ritual represented in the four-step guide as releasing the written wish to the universe.""",
+          """The envelope is the part you keep. Place the written intention you want to preserve inside, close the envelope, and seal it with the wax stamp you chose. The finished envelope becomes the physical promise described in the kit: something you can put away, return to, and use as a reminder of the intention you set.""",
+          """So the full sequence is this. Open the kit and identify every piece. Prepare and prime the fountain pen. Write your intention. Choose the seal that matches your purpose. Melt the wax and stamp the envelope. Use the fire paper for the release step if that is the path you are taking. Then keep the sealed envelope as the lasting physical part of the ritual. Work slowly, keep the flame and hot wax under control, and let each step finish before moving to the next one."""
+          ]
 
-          # First: direct audio response.
-          for url,mime,raw in bodies:
-              if len(raw)>50000 and ('audio' in mime.lower() or raw[:3]==b'ID3' or raw[:4] in [b'RIFF',b'fLaC']):
-                  open('narration.mp3','wb').write(raw); print('DIRECT AUDIO',url,len(raw)); raise SystemExit(0)
-          # Second: URL embedded in JSON/text response.
-          alltext='\n'.join(raw.decode('utf-8','ignore') for _,_,raw in bodies)
-          open('responses.txt','w').write(alltext)
-          urls=re.findall(r'https?://[^"\\\s<>]+',alltext)
-          print('FOUND URLS')
-          for u in urls: print(u[:1200])
-          for u in reversed(urls):
-              u=u.replace('\\u0026','&').replace('&amp;','&')
-              if any(k in u.lower() for k in ['.mp3','.wav','.m4a','.aac','storage.googleapis','cloudfront','audio']):
-                  try:
-                      rr=requests.get(u,timeout=60,allow_redirects=True)
-                      ct=rr.headers.get('content-type','')
-                      print('TRY',rr.status_code,len(rr.content),ct,u[:300])
-                      if rr.ok and len(rr.content)>50000 and ('audio' in ct.lower() or rr.content[:3]==b'ID3' or rr.content[:4]==b'RIFF'):
-                          open('narration.mp3','wb').write(rr.content); print('URL AUDIO',len(rr.content)); raise SystemExit(0)
-                  except Exception as e:
-                      print('ERR',e)
-          raise SystemExit('Narration audio not captured')
+          async def main():
+              for i, text in enumerate(parts, 1):
+                  c = edge_tts.Communicate(text, voice='en-US-JennyNeural', rate='-8%', volume='+0%', pitch='+0Hz')
+                  await c.save(f'part_{i:02}.mp3')
+          asyncio.run(main())
           PY
-          python /tmp/capture.py
-          file narration.mp3
-          ls -lh narration.mp3
-      - name: Upload narration artifact
+          python /tmp/make_voice.py
+          ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 0.85 -c:a libmp3lame -b:a 64k silence.mp3 >/dev/null 2>&1
+          rm -f concat.txt
+          for f in part_*.mp3; do
+            echo "file '$PWD/$f'" >> concat.txt
+            echo "file '$PWD/silence.mp3'" >> concat.txt
+          done
+          ffmpeg -y -f concat -safe 0 -i concat.txt -c:a libmp3lame -b:a 96k -ar 24000 -ac 1 natural_narration.mp3
+          ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 natural_narration.mp3
+          ls -lh natural_narration.mp3
+      - name: Upload narration
         uses: actions/upload-artifact@v4
         with:
-          name: narration-audio-captured
-          path: narration.mp3
+          name: natural-narration
+          path: natural_narration.mp3
           retention-days: 1
