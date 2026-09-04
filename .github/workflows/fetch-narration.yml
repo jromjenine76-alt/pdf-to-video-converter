@@ -10,80 +10,39 @@ jobs:
   fetch-audio:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect narrated audio page in browser
+      - name: Fetch saved voiceover data
         run: |
-          python -m pip install -q selenium requests
-          cat > /tmp/fetch_audio.py <<'PY'
-          import time, re, requests
-          from selenium import webdriver
-          from selenium.webdriver.chrome.options import Options
-          from selenium.webdriver.common.by import By
-
-          page='https://www.aidocmaker.com/g0/audio?name=12e74329d7a845af84b2dabd5dd115cc'
-          opt=Options()
-          opt.add_argument('--headless=new')
-          opt.add_argument('--no-sandbox')
-          opt.add_argument('--disable-dev-shm-usage')
-          opt.add_argument('--autoplay-policy=no-user-gesture-required')
-          d=webdriver.Chrome(options=opt)
-          d.get(page)
-          time.sleep(12)
-          for el in d.find_elements(By.TAG_NAME,'button'):
-              try:
-                  txt=(el.text or '').strip().lower()
-                  aria=(el.get_attribute('aria-label') or '').lower()
-                  if 'play' in txt or 'play' in aria or 'listen' in txt:
-                      el.click(); time.sleep(4); break
-              except Exception:
-                  pass
-          urls=[]
-          for tag in ['audio','source']:
-              for el in d.find_elements(By.TAG_NAME,tag):
-                  for attr in ['src','currentSrc']:
-                      try:
-                          u=el.get_attribute(attr)
-                          if u: urls.append(u)
-                      except Exception:
-                          pass
-          try:
-              urls += d.execute_script("return performance.getEntriesByType('resource').map(e=>e.name)") or []
-          except Exception:
-              pass
-          html=d.page_source
-          d.quit()
-          urls += re.findall(r'https?://[^\"\'<> ]+',html)
-          seen=[]
-          for u in urls:
-              u=u.replace('&amp;','&')
-              if u not in seen: seen.append(u)
-          open('resources.txt','w').write('\n'.join(seen))
-          candidates=[u for u in seen if any(x in u.lower() for x in ['.mp3','.wav','.m4a','audio','storage.googleapis','cdn','cloudfront']) and 'aidocmaker.com/g0/audio?' not in u]
-          print('CANDIDATES')
-          print('\n'.join(candidates[-80:]))
+          set -euxo pipefail
+          JSON='https://www.aidocmaker.com/_next/data/build-TfctsWXpff2fKS/g0/audio.json?appCode=g0&name=12e74329d7a845af84b2dabd5dd115cc&search=true'
+          curl -L --fail "$JSON" -o data.json
+          python - <<'PY'
+          import json,re,requests
+          raw=open('data.json','r',errors='ignore').read()
+          print(raw[:8000])
+          urls=re.findall(r'https?://[^"\\ ]+',raw)
+          print('\nURLS:')
+          for u in urls: print(u)
           ok=False
-          for u in reversed(candidates):
-              try:
-                  r=requests.get(u,timeout=45,allow_redirects=True)
-                  ct=r.headers.get('content-type','').lower()
-                  if r.ok and len(r.content)>50000 and ('audio' in ct or u.lower().split('?')[0].endswith(('.mp3','.wav','.m4a','.aac'))):
-                      open('narration.mp3','wb').write(r.content)
-                      print('DOWNLOADED',u,len(r.content),ct)
-                      ok=True
-                      break
-              except Exception as e:
-                  print('ERR',u,e)
+          for u in reversed(urls):
+              if any(x in u.lower() for x in ['.mp3','.wav','.m4a','.aac','storage.googleapis','cloudfront','audio']):
+                  try:
+                      r=requests.get(u,timeout=60,allow_redirects=True)
+                      ct=r.headers.get('content-type','').lower()
+                      print('TRY',u,r.status_code,len(r.content),ct)
+                      if r.ok and len(r.content)>50000 and ('audio' in ct or u.lower().split('?')[0].endswith(('.mp3','.wav','.m4a','.aac'))):
+                          open('narration.mp3','wb').write(r.content)
+                          ok=True
+                          break
+                  except Exception as e:
+                      print('ERR',e)
           if not ok:
-              open('page.html','w').write(html)
-              raise SystemExit(2)
+              raise SystemExit('No audio URL in saved data')
           PY
-          python /tmp/fetch_audio.py
           file narration.mp3
           ls -lh narration.mp3
       - name: Upload narration artifact
         uses: actions/upload-artifact@v4
         with:
-          name: narration-audio-browser
-          path: |
-            narration.mp3
-            resources.txt
+          name: narration-audio-json
+          path: narration.mp3
           retention-days: 1
