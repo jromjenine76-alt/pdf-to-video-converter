@@ -1,0 +1,100 @@
+name: Build Spellcraft Episode 1 Correction Audio
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/spellcraft-episode1-corrections.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --upgrade pip
+          pip install edge-tts
+
+      - name: Generate exact-duration correction clips
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, subprocess
+          from pathlib import Path
+          import edge_tts
+
+          VOICE='en-US-AvaMultilingualNeural'
+          RATE='+2%'
+          PITCH='-2Hz'
+          OUT=Path('episode1_corrections')
+          OUT.mkdir(exist_ok=True)
+
+          clips = [
+              ('page_count', 4.852, 'This P D F contains two hundred thirty-one pages and is organized into sixteen major parts.'),
+              ('cover', 3.725, 'The cover presents three symbols that frame the entire system.'),
+              ('wyspell', 4.264, 'The second equipment group is the Why-spell thirty-six colored spell-candle set.'),
+              ('protocol', 5.808, 'To be precise: the manual shows seven integrated movements, built around a four-step preparation core.'),
+              ('wyspell_late_1', 3.881, 'The Master Edition safety rules and the twenty-minute maximum for multi-candle Why-spell sessions override that wording.'),
+              ('wyspell_late_2', 4.473, 'Multi-candle Why-spell sessions have a twenty-minute maximum before snuffing.'),
+          ]
+
+          def probe(path):
+              return float(subprocess.check_output([
+                  'ffprobe','-v','error','-show_entries','format=duration',
+                  '-of','default=noprint_wrappers=1:nokey=1',str(path)
+              ], text=True).strip())
+
+          def atempo_chain(ratio):
+              vals=[]
+              r=ratio
+              while r>2.0:
+                  vals.append(2.0); r/=2.0
+              while r<0.5:
+                  vals.append(0.5); r/=0.5
+              vals.append(r)
+              return ','.join(f'atempo={v:.8f}' for v in vals)
+
+          async def synth(name, target, text):
+              raw=OUT/f'{name}_raw.mp3'
+              wav=OUT/f'{name}.wav'
+              await edge_tts.Communicate(text=text,voice=VOICE,rate=RATE,pitch=PITCH).save(str(raw))
+              dur=probe(raw)
+              if dur <= target + 0.01:
+                  af='apad'
+              else:
+                  af=atempo_chain(dur/target)
+              subprocess.run([
+                  'ffmpeg','-y','-v','error','-i',str(raw),'-af',af,
+                  '-t',f'{target:.6f}','-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav)
+              ], check=True)
+              print(name, 'raw', dur, 'target', target, 'final', probe(wav))
+
+          async def main():
+              for clip in clips:
+                  await synth(*clip)
+          asyncio.run(main())
+          PY
+
+      - name: Verify correction clips
+        run: |
+          set -euo pipefail
+          for f in episode1_corrections/*.wav; do
+            test -s "$f"
+            ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f"
+          done
+
+      - name: Upload correction clips
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-episode1-correction-audio
+          path: episode1_corrections/*.wav
+          retention-days: 1
