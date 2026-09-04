@@ -12,9 +12,11 @@ jobs:
     steps:
       - name: Generate relaxed neural narration
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
           python -m pip install -q edge-tts
           cat > /tmp/make_voice.py <<'PY'
-          import asyncio, edge_tts, pathlib, subprocess
+          import asyncio, edge_tts
 
           parts = [
           """This walkthrough begins the moment you open the Manifest Your Dreams Seal Kit. Set the box on a clear, heat-safe surface and lay everything out so you can see what you have before you begin. The kit brings together the instruction manual, ritual writing paper, envelopes, fire paper, the green-and-gold fountain pen, a black ink cartridge, wax beads, the wax spoon and warmer, tea candles, the sealing tools, and the decorative pieces shown with the set. Laying everything out first keeps the entire sequence ready before you start writing or melting wax.""",
