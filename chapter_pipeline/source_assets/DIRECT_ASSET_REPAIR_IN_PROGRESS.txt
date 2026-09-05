@@ -1,0 +1,1 @@
+Repair in progress: replacing truncated runtime payloads with direct binary JPEG blobs, then switching the visual-quality renderer to validate Pillow-openable assets before rendering.
