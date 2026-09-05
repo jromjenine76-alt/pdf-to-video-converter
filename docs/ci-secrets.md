@@ -18,3 +18,4 @@ This repository has both optional and required secret usage in workflows.
 
 - `spellcraft-key-check.yml` runs on all pushes, pull requests, and manual dispatch without restrictive path filters.
 - `workflow-validation.yml` runs on pull requests that touch `.github/workflows/**`, on main-branch pushes that touch `.github/workflows/**`, and on manual dispatch.
+- `spellcraft-marin-storytelling.yml` still runs when dispatched or when its tracked files change, but it intentionally skips verification and artifact upload when narration generation is skipped.
