@@ -17,9 +17,20 @@ def install_user_assets() -> list[str]:
     """Decode the user-extracted source pack into the runtime asset directory."""
     if not PACK.exists():
         raise SystemExit(f'Missing visual-quality asset pack: {PACK}')
-    raw = base64.b64decode(PACK.read_text(encoding='utf-8').strip())
-    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-        zf.extractall(ASSET_DIR)
+    encoded = ''.join(PACK.read_text(encoding='utf-8').split())
+    encoded += '=' * (-len(encoded) % 4)
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        raise SystemExit(f'Visual asset pack Base64 decode failed: {exc}') from exc
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            bad = zf.testzip()
+            if bad:
+                raise SystemExit(f'Visual asset pack ZIP integrity check failed at: {bad}')
+            zf.extractall(ASSET_DIR)
+    except zipfile.BadZipFile as exc:
+        raise SystemExit(f'Visual asset pack decoded but is not a valid ZIP: {exc}') from exc
     names = sorted(p.name for p in ASSET_DIR.glob('*.jpg') if p.name.startswith(('wyspell_', 'lo_scarabeo_')))
     required = {
         'lo_scarabeo_tools.jpg',
