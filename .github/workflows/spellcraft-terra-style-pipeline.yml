@@ -119,26 +119,59 @@ jobs:
             --kokoro-voices .kokoro/voices-v1.0.bin \
             --asset-dir chapter_pipeline/source_assets
 
-      - name: Verify chapter MP4 and locked voice metadata
+      - name: Verify chapter artifact contract, MP4, and locked voice
         run: |
           chapter_mp4="chapter_output/chapter_$(printf '%03d' '${{ matrix.chapter }}').mp4"
           chapter_json="chapter_output/chapter_$(printf '%03d' '${{ matrix.chapter }}').json"
           test -s "$chapter_mp4"
           test -s "$chapter_json"
-          python - "$chapter_json" <<'PY'
-          import json, sys
-          meta=json.load(open(sys.argv[1], encoding='utf-8'))
+          python - "$chapter_json" "$chapter_mp4" <<'PY'
+          import json, subprocess, sys
+          from pathlib import Path
+
+          meta_path = Path(sys.argv[1])
+          video_path = Path(sys.argv[2])
+          meta = json.loads(meta_path.read_text(encoding='utf-8'))
+
+          required = {
+              'chapter', 'title', 'scenes', 'tentpole_motion_scenes',
+              'duration_seconds', 'video', 'voice_provider', 'voice',
+              'voice_locked', 'pipeline'
+          }
+          missing = sorted(required - set(meta))
+          assert not missing, f'metadata contract missing fields: {missing}'
+          assert int(meta['chapter']) == int('${{ matrix.chapter }}')
+          assert meta['video'] == video_path.name
           assert meta['voice_provider'] == 'kokoro'
           assert meta['voice'] == 'af_sarah'
           assert meta['voice_locked'] is True
-          assert meta['scenes'] >= 1
-          assert meta['tentpole_motion_scenes'] >= 1
-          assert 'sentence scene' in meta['pipeline']
+          assert int(meta['scenes']) >= 1
+          assert int(meta['tentpole_motion_scenes']) >= 1
+          assert float(meta['duration_seconds']) > 0
+          assert 'sentence scene' in str(meta['pipeline'])
+
+          probe = json.loads(subprocess.check_output([
+              'ffprobe', '-v', 'error', '-show_streams', '-show_format',
+              '-of', 'json', str(video_path)
+          ], text=True))
+          streams = probe.get('streams', [])
+          v = next((s for s in streams if s.get('codec_type') == 'video'), None)
+          a = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+          assert v, 'missing video stream'
+          assert a, 'missing audio stream'
+          assert v.get('codec_name') == 'h264', f"unexpected video codec: {v.get('codec_name')}"
+          assert int(v.get('width', 0)) == 1920 and int(v.get('height', 0)) == 1080, (
+              f"unexpected frame size: {v.get('width')}x{v.get('height')}"
+          )
+          assert a.get('codec_name') == 'aac', f"unexpected audio codec: {a.get('codec_name')}"
+          assert float(probe.get('format', {}).get('duration', 0)) > 0
+
+          print('artifact contract verified')
           print('locked voice verified:', meta['voice'])
           print('cinematic scenes:', meta['scenes'])
           print('tentpole scenes:', meta['tentpole_motion_scenes'])
+          print('media verified: 1920x1080 H.264 + AAC')
           PY
-          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json "$chapter_mp4"
 
       - name: Upload completed chapter checkpoint
         uses: actions/upload-artifact@v4
@@ -151,8 +184,10 @@ jobs:
 
   assemble-preview:
     needs: render-chapter
-    if: ${{ always() && !cancelled() }}
+    # Do not create a second, confusing failure if any selected chapter failed.
+    if: ${{ needs.render-chapter.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -168,6 +203,24 @@ jobs:
           path: chapter_output
           merge-multiple: true
 
+      - name: Inspect downloaded chapter artifacts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          metas = sorted(Path('chapter_output').glob('chapter_*.json'))
+          videos = sorted(Path('chapter_output').glob('chapter_*.mp4'))
+          if not metas or not videos:
+              raise SystemExit('No completed chapter artifacts were downloaded')
+          for meta_path in metas:
+              meta = json.loads(meta_path.read_text(encoding='utf-8'))
+              video = Path('chapter_output') / str(meta.get('video', ''))
+              if not video.is_file() or video.stat().st_size == 0:
+                  raise SystemExit(f'Metadata {meta_path.name} references missing video {video.name}')
+              print(f"chapter {meta.get('chapter')}: {video.name} / {meta.get('scenes', meta.get('chunks', 0))} scenes")
+          PY
+
       - name: Build review player
         run: python chapter_pipeline/build_preview.py --chapters-dir chapter_output --output-dir preview_app
 
@@ -175,15 +228,42 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import subprocess
-          files=sorted(Path('chapter_output').glob('chapter_*.mp4'))
+          import json, subprocess
+
+          def chapter_number(path: Path) -> int:
+              try:
+                  return int(path.stem.split('_')[-1])
+              except Exception:
+                  return 999999
+
+          files = sorted(Path('chapter_output').glob('chapter_*.mp4'), key=chapter_number)
           if not files:
               raise SystemExit('No chapter MP4s available')
-          listing=Path('chapter_output/master.concat.txt')
-          listing.write_text(''.join(f"file '{p.resolve().as_posix()}'\n" for p in files),encoding='utf-8')
-          subprocess.run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(listing),'-c','copy','-movflags','+faststart','chapter_output/Spellcraft_Current_Master.mp4'],check=True)
+
+          for p in files:
+              probe = json.loads(subprocess.check_output([
+                  'ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(p)
+              ], text=True))
+              streams = probe.get('streams', [])
+              v = next((s for s in streams if s.get('codec_type') == 'video'), None)
+              a = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+              if not v or not a:
+                  raise SystemExit(f'{p.name}: missing video or audio stream')
+              if v.get('codec_name') != 'h264' or a.get('codec_name') != 'aac':
+                  raise SystemExit(f'{p.name}: incompatible codecs for concat')
+              if int(v.get('width', 0)) != 1920 or int(v.get('height', 0)) != 1080:
+                  raise SystemExit(f'{p.name}: incompatible frame size')
+
+          listing = Path('chapter_output/master.concat.txt')
+          listing.write_text(''.join(f"file '{p.resolve().as_posix()}'\n" for p in files), encoding='utf-8')
+          subprocess.run([
+              'ffmpeg', '-y', '-v', 'error', '-f', 'concat', '-safe', '0',
+              '-i', str(listing), '-c', 'copy', '-movflags', '+faststart',
+              'chapter_output/Spellcraft_Current_Master.mp4'
+          ], check=True)
           print(f'assembled {len(files)} chapters')
           PY
+          test -s chapter_output/Spellcraft_Current_Master.mp4
           ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 chapter_output/Spellcraft_Current_Master.mp4
 
       - name: Upload preview app
