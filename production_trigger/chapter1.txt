@@ -1,4 +1,8 @@
-Start Spellcraft Terra-style production proof.
-Locked narration voice: Kokoro af_sarah.
+Start corrected Spellcraft Chapter 1 production proof.
+Locked narration voice: Kokoro af_sarah. Never replace the approved voice.
 Render target: chapter 1 only.
-Pipeline: voice first -> one scene per sentence -> cinematic full-screen illustration -> alternating Ken Burns -> three tentpole motion scenes -> burned subtitles -> H.264/AAC faststart.
+Visual version: source_reconstruction_v3.
+Use clean isolated PDF source visuals when present. When a source visual is contaminated by surrounding page text or unavailable on the runner, rebuild the specific manual visual rather than showing the PDF page or falling back to a generic slide.
+Required Chapter 1 source-specific visuals include the Soul Sticks kit, Wyspell candle set/color reference, Lo Scarabeo calligraphic ritual kit, Selenite where narrated, and the named candle-layout diagrams when narrated.
+Pipeline: voice first -> sentence scene -> clean source visual or source-specific reconstruction -> cinematic full-screen teaching composition -> recurring object-motion beats + alternating camera motion -> burned subtitles -> 1920x1080 H.264/AAC faststart.
+QA gate: Chapter 1 must report at least four source-specific visuals/reconstructions and at least three dynamic object-motion scenes before upload.
