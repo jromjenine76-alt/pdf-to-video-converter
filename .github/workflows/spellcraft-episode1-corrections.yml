@@ -1,4 +1,4 @@
-name: Build Spellcraft Episode 1 Correction Audio
+name: Build Full Corrected Spellcraft Audio
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -24,7 +24,125 @@ jobs:
           python -m pip install --upgrade pip
           pip install edge-tts
 
-      - name: Generate exact-duration correction clips
+      - name: Reconstruct corrected narration manifest
+        run: |
+          python - <<'PY'
+          import base64, gzip, json
+          from pathlib import Path
+          parts = [
+              Path('spellcraft/corrected_units.json'),
+              Path('spellcraft/corrected_units.part1'),
+              Path('spellcraft/corrected_units.part2'),
+              Path('spellcraft/corrected_units.part3'),
+          ]
+          encoded = ''.join(p.read_text().strip() for p in parts)
+          raw = gzip.decompress(base64.b64decode(encoded))
+          Path('corrected_units_full.json').write_bytes(raw)
+          data = json.loads(raw)
+          print('units:', len(data))
+          print('episodes:', sorted({x['episode'] for x in data}))
+          assert len(data) == 83
+          assert sorted({x['episode'] for x in data}) == [2,4,5,6,7,8]
+          PY
+
+      - name: Generate corrected full-episode narration
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, json, subprocess, shutil
+          from pathlib import Path
+          import edge_tts
+
+          VOICE='en-US-AvaMultilingualNeural'
+          RATE='+2%'
+          PITCH='-2Hz'
+          ROOT=Path('corrected_audio_work')
+          ROOT.mkdir(exist_ok=True)
+          FINAL=Path('corrected_audio')
+          FINAL.mkdir(exist_ok=True)
+          units=json.loads(Path('corrected_units_full.json').read_text())
+
+          def probe(path):
+              return float(subprocess.check_output([
+                  'ffprobe','-v','error','-show_entries','format=duration',
+                  '-of','default=noprint_wrappers=1:nokey=1',str(path)
+              ], text=True).strip())
+
+          def atempo_chain(ratio):
+              vals=[]
+              r=float(ratio)
+              while r>2.0:
+                  vals.append(2.0); r/=2.0
+              while r<0.5:
+                  vals.append(0.5); r/=0.5
+              vals.append(r)
+              return ','.join(f'atempo={v:.8f}' for v in vals)
+
+          async def synth(u):
+              ep=int(u['episode']); unit=int(u['unit']); target=float(u['duration'])
+              d=ROOT/f'ep{ep:02d}'
+              d.mkdir(exist_ok=True)
+              raw=d/f'u{unit:02d}_raw.mp3'
+              wav=d/f'u{unit:02d}.wav'
+              text=u['tts_text']
+              # Retry transient Edge service failures.
+              last=None
+              for attempt in range(4):
+                  try:
+                      await edge_tts.Communicate(text=text,voice=VOICE,rate=RATE,pitch=PITCH).save(str(raw))
+                      if raw.stat().st_size > 0:
+                          break
+                  except Exception as e:
+                      last=e
+                      if attempt == 3: raise
+                      await asyncio.sleep(3*(attempt+1))
+              dur=probe(raw)
+              # Preserve the approved voice timbre while matching the existing visual unit exactly.
+              # atempo changes time without shifting pitch.
+              if abs(dur-target) <= 0.02:
+                  af='anull'
+              elif dur < target:
+                  # Keep natural speech rate and pad the remainder with silence rather than slowing speech.
+                  af='apad'
+              else:
+                  af=atempo_chain(dur/target)
+              subprocess.run([
+                  'ffmpeg','-y','-v','error','-i',str(raw),'-af',af,
+                  '-t',f'{target:.6f}','-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav)
+              ],check=True)
+              fd=probe(wav)
+              if abs(fd-target)>0.04:
+                  raise RuntimeError((ep,unit,target,fd))
+              print(f'episode {ep} unit {unit}: raw={dur:.3f} target={target:.3f} final={fd:.3f}')
+              raw.unlink(missing_ok=True)
+
+          async def main():
+              for i,u in enumerate(units,1):
+                  print(f'[{i}/{len(units)}] {u["title"]}')
+                  await synth(u)
+          asyncio.run(main())
+
+          # Concatenate the exact-duration unit WAVs into one corrected episode track.
+          for ep in sorted({int(u['episode']) for u in units}):
+              ep_units=sorted([u for u in units if int(u['episode'])==ep], key=lambda x:int(x['unit']))
+              d=ROOT/f'ep{ep:02d}'
+              concat=d/'concat.txt'
+              concat.write_text('\n'.join("file '"+str((d/f"u{int(u['unit']):02d}.wav").resolve()).replace("'","'\\''")+"'" for u in ep_units)+'\n')
+              out=FINAL/f'episode_{ep}.m4a'
+              subprocess.run([
+                  'ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(concat),
+                  '-c:a','aac','-b:a','192k','-ar','48000','-ac','1',str(out)
+              ],check=True)
+              expected=sum(float(u['duration']) for u in ep_units)
+              actual=probe(out)
+              print('EPISODE',ep,'expected',expected,'actual',actual)
+              if abs(actual-expected)>0.15:
+                  raise RuntimeError(('episode duration mismatch',ep,expected,actual))
+
+          shutil.copy2('corrected_units_full.json', FINAL/'corrected_units_full.json')
+          PY
+
+      - name: Generate Episode 1 correction clips
         shell: bash
         run: |
           python - <<'PY'
@@ -37,7 +155,6 @@ jobs:
           PITCH='-2Hz'
           OUT=Path('episode1_corrections')
           OUT.mkdir(exist_ok=True)
-
           clips = [
               ('page_count', 4.852, 'This P D F contains two hundred thirty-one pages and is organized into sixteen major parts.'),
               ('cover', 3.725, 'The cover presents three symbols that frame the entire system.'),
@@ -46,55 +163,49 @@ jobs:
               ('wyspell_late_1', 3.881, 'The Master Edition safety rules and the twenty-minute maximum for multi-candle Why-spell sessions override that wording.'),
               ('wyspell_late_2', 4.473, 'Multi-candle Why-spell sessions have a twenty-minute maximum before snuffing.'),
           ]
-
           def probe(path):
-              return float(subprocess.check_output([
-                  'ffprobe','-v','error','-show_entries','format=duration',
-                  '-of','default=noprint_wrappers=1:nokey=1',str(path)
-              ], text=True).strip())
-
+              return float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',str(path)],text=True).strip())
           def atempo_chain(ratio):
-              vals=[]
-              r=ratio
-              while r>2.0:
-                  vals.append(2.0); r/=2.0
-              while r<0.5:
-                  vals.append(0.5); r/=0.5
+              vals=[]; r=float(ratio)
+              while r>2.0: vals.append(2.0); r/=2.0
+              while r<0.5: vals.append(0.5); r/=0.5
               vals.append(r)
               return ','.join(f'atempo={v:.8f}' for v in vals)
-
-          async def synth(name, target, text):
-              raw=OUT/f'{name}_raw.mp3'
-              wav=OUT/f'{name}.wav'
-              await edge_tts.Communicate(text=text,voice=VOICE,rate=RATE,pitch=PITCH).save(str(raw))
+          async def synth(name,target,text):
+              raw=OUT/f'{name}_raw.mp3'; wav=OUT/f'{name}.wav'
+              for attempt in range(4):
+                  try:
+                      await edge_tts.Communicate(text=text,voice=VOICE,rate=RATE,pitch=PITCH).save(str(raw)); break
+                  except Exception:
+                      if attempt==3: raise
+                      await asyncio.sleep(3*(attempt+1))
               dur=probe(raw)
-              if dur <= target + 0.01:
-                  af='apad'
-              else:
-                  af=atempo_chain(dur/target)
-              subprocess.run([
-                  'ffmpeg','-y','-v','error','-i',str(raw),'-af',af,
-                  '-t',f'{target:.6f}','-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav)
-              ], check=True)
-              print(name, 'raw', dur, 'target', target, 'final', probe(wav))
-
+              af='apad' if dur<=target+0.01 else atempo_chain(dur/target)
+              subprocess.run(['ffmpeg','-y','-v','error','-i',str(raw),'-af',af,'-t',f'{target:.6f}','-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav)],check=True)
+              raw.unlink(missing_ok=True)
           async def main():
-              for clip in clips:
-                  await synth(*clip)
+              for c in clips: await synth(*c)
           asyncio.run(main())
           PY
 
-      - name: Verify correction clips
+      - name: Verify outputs
         run: |
           set -euo pipefail
-          for f in episode1_corrections/*.wav; do
-            test -s "$f"
-            ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f"
+          test -s corrected_audio/episode_2.m4a
+          test -s corrected_audio/episode_4.m4a
+          test -s corrected_audio/episode_5.m4a
+          test -s corrected_audio/episode_6.m4a
+          test -s corrected_audio/episode_7.m4a
+          test -s corrected_audio/episode_8.m4a
+          for f in corrected_audio/*.m4a episode1_corrections/*.wav; do
+            ffprobe -v error "$f" >/dev/null
           done
 
-      - name: Upload correction clips
+      - name: Upload full corrected audio package
         uses: actions/upload-artifact@v4
         with:
-          name: spellcraft-episode1-correction-audio
-          path: episode1_corrections/*.wav
+          name: spellcraft-full-corrected-audio
+          path: |
+            corrected_audio/
+            episode1_corrections/*.wav
           retention-days: 1
