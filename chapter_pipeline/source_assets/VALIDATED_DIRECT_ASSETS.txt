@@ -1,0 +1,1 @@
+Validated direct JPEG assets are committed as binary blobs on this branch and should be preferred over legacy Base64-pack extraction. Source images were recovered from the user's uploaded spell book and kit images PDF and resized only for the Chapter 1 visual-quality gate.
