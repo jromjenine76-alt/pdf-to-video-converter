@@ -1,0 +1,63 @@
+name: Spellcraft Kokoro Voice Test
+
+on:
+  push:
+    branches:
+      - spellcraft-terra-style-pipeline-v1
+    paths:
+      - 'chapter_pipeline/kokoro_voice_test.py'
+      - '.github/workflows/spellcraft-kokoro-voice-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kokoro-voice-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: spellcraft-terra-style-pipeline-v1
+
+      - name: Install local TTS tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg espeak-ng
+          python -m pip install --upgrade pip >/dev/null
+          pip install kokoro-onnx soundfile >/dev/null
+
+      - name: Download Kokoro model and voices
+        run: |
+          mkdir -p .kokoro
+          curl -fL --retry 3 --retry-delay 2 \
+            https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx \
+            -o .kokoro/kokoro-v1.0.onnx
+          curl -fL --retry 3 --retry-delay 2 \
+            https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin \
+            -o .kokoro/voices-v1.0.bin
+          test -s .kokoro/kokoro-v1.0.onnx
+          test -s .kokoro/voices-v1.0.bin
+
+      - name: Generate free human-like voice samples
+        run: |
+          python chapter_pipeline/kokoro_voice_test.py \
+            --model .kokoro/kokoro-v1.0.onnx \
+            --voices .kokoro/voices-v1.0.bin \
+            --output-dir kokoro_voice_tests
+
+      - name: Verify samples
+        run: |
+          ls -lh kokoro_voice_tests
+          for f in kokoro_voice_tests/*.wav; do
+            ffprobe -v error -show_entries stream=codec_name,sample_rate,channels -show_entries format=duration -of json "$f"
+          done
+
+      - name: Upload Kokoro voice samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-kokoro-free-voice-tests
+          path: kokoro_voice_tests
+          retention-days: 7
