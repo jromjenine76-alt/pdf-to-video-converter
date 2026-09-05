@@ -32,12 +32,15 @@ def main() -> None:
     for item in items:
         pages = item.get('source_pages') or []
         page_text = '' if not pages else f"Pages {pages[0]}–{pages[-1]}"
+        scene_count = item.get('scenes', item.get('chunks', 0))
+        duration_seconds = float(item.get('duration_seconds', item.get('duration', 0.0)))
+        unit_label = 'cinematic scenes' if 'scenes' in item else 'checkpointed segments'
         cards.append(f'''
         <article class="card">
           <div class="eyebrow">CHAPTER {item['chapter']:02d} {html.escape(page_text)}</div>
           <h2>{html.escape(item['title'])}</h2>
           <video controls preload="metadata" src="{html.escape(item.get('video_url',''))}"></video>
-          <div class="meta">{item['chunks']} checkpointed segments · {item['duration_seconds']/60:.1f} min</div>
+          <div class="meta">{scene_count} {unit_label} · {duration_seconds/60:.1f} min</div>
           <a class="download" href="{html.escape(item.get('video_url',''))}" download>Download chapter MP4</a>
         </article>''')
 
