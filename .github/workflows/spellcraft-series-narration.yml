@@ -328,7 +328,7 @@ jobs:
                           f"target={total_target:.6f}s actual={final_audio_duration:.6f}s"
                       )
 
-                  manifest["episodes"][str(ep)] = {
+                  manifest["episodes"][f"{ep:02d}"] = {
                       "target_duration": total_target,
                       "final_audio_duration": final_audio_duration,
                       "units": unit_manifest,
@@ -366,7 +366,7 @@ jobs:
               )
           )
           out = Path("narration_output")
-          expected = {str(int(ep)) for ep in os.environ["SPELLCRAFT_EPISODES"].split()}
+          expected = set(os.environ["SPELLCRAFT_EPISODES"].split())
           actual = set(manifest.get("episodes", {}))
           missing = sorted(expected - actual)
           extra = sorted(actual - expected)
