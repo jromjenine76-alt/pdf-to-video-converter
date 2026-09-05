@@ -1,5 +1,5 @@
-Chapter 1 visual quality pass v4.
-Use the user-extracted Wyspell and Lo Scarabeo imagery as real source visuals.
+Chapter 1 visual quality pass v5.
+Use the user-extracted Wyspell and Lo Scarabeo imagery as real source visuals when they pass pixel-health validation.
 Keep Kokoro af_sarah locked.
 Full-screen cinematic source composition, recurring object motion, no text-wall slideshow treatment.
 Rerun after Base64 padding and ZIP integrity fix: 2026-09-05 06:57 America/New_York.
@@ -8,3 +8,4 @@ Rerun after direct per-image Base64 recovery decode fix: 2026-09-05 07:43 Americ
 Rerun after direct binary JPEG commit and Pillow validation: 2026-09-05 08:10 America/New_York.
 Rerun after permanent converter hardening: full pixel decode, truncated-JPEG salvage, clean PNG rewrite, fail-fast asset gate, and runtime fallback: 2026-09-05 08:34 America/New_York.
 Rerun after deterministic WYSPELL visual-routing coverage fix: 2026-09-05.
+Manual visual QA found structurally decodable but visually blank source frames in v4. v5 adds conservative pixel-health rejection plus source-specific reconstruction fallback before style lock: 2026-09-05.
