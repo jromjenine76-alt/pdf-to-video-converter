@@ -85,6 +85,13 @@ jobs:
               )
               raise SystemExit(42)
 
+          def skip_if_billing_inactive(error, wav):
+              if not billing_inactive_message(error):
+                  return
+              if wav.exists():
+                  wav.unlink()
+              mark_skipped()
+
           def run(cmd):
               subprocess.run(cmd, check=True)
 
@@ -177,21 +184,13 @@ jobs:
                       if wav.exists() and wav.stat().st_size > 1000:
                           break
                   except APIStatusError as error:
-                      message = billing_inactive_message(error)
-                      if message:
-                          if wav.exists():
-                              wav.unlink()
-                          mark_skipped()
+                      skip_if_billing_inactive(error, wav)
                       if wav.exists():
                           wav.unlink()
                       if attempt == 3:
                           raise
                   except Exception as error:
-                      message = billing_inactive_message(error)
-                      if message:
-                          if wav.exists():
-                              wav.unlink()
-                          mark_skipped()
+                      skip_if_billing_inactive(error, wav)
                       if wav.exists():
                           wav.unlink()
                       if attempt == 3:
