@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import sys
 from pathlib import Path
+
+from PIL import Image
 
 import render_chapter as rc
 
@@ -18,25 +19,24 @@ REQUIRED = {
 
 
 def install_user_assets() -> list[str]:
-    """Decode each recovered source visual directly from its companion .b64 file."""
+    """Validate the recovered source visuals committed directly as binary JPEGs."""
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     installed: list[str] = []
     for name in sorted(REQUIRED):
         target = ASSET_DIR / name
-        encoded_path = ASSET_DIR / f'{name}.b64'
-        if not encoded_path.exists():
-            raise SystemExit(f'Missing recovered source visual payload: {encoded_path}')
-        encoded = ''.join(encoded_path.read_text(encoding='utf-8').split())
-        encoded += '=' * (-len(encoded) % 4)
+        if not target.exists():
+            raise SystemExit(f'Missing direct recovered source visual: {target}')
         try:
-            raw = base64.b64decode(encoded, validate=True)
+            with Image.open(target) as image:
+                image.verify()
+            with Image.open(target) as image:
+                width, height = image.size
+                if width < 100 or height < 100:
+                    raise ValueError(f'image dimensions too small: {width}x{height}')
         except Exception as exc:
-            raise SystemExit(f'Recovered source visual Base64 decode failed for {name}: {exc}') from exc
-        if not raw.startswith(b'\xff\xd8\xff'):
-            raise SystemExit(f'Recovered source visual is not a JPEG: {name}')
-        target.write_bytes(raw)
+            raise SystemExit(f'Direct recovered source visual failed Pillow validation for {name}: {exc}') from exc
         installed.append(name)
-    print('installed recovered user source visuals:', ', '.join(installed), flush=True)
+    print('validated direct recovered user source visuals:', ', '.join(installed), flush=True)
     return installed
 
 
