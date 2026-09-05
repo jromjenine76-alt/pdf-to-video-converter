@@ -37,8 +37,13 @@ def load_voice_config(path: Path) -> dict:
 
 
 def sentence_beats(text: str) -> list[str]:
-    """Keep the narration bible intact while producing one picture beat per spoken sentence."""
-    text = clean(text)
+    """Keep display text intact while producing one picture beat per spoken sentence.
+
+    Pronunciation substitutions belong only inside TTS synthesis. They must never leak
+    into burned subtitles or scene text (for example, show 'Lo Scarabeo', not a phonetic
+    helper such as 'loh skah rah BEH oh').
+    """
+    text = re.sub(r'\s+', ' ', text).strip()
     raw = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
     out: list[str] = []
     pending = ''
