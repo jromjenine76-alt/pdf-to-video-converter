@@ -1,0 +1,195 @@
+name: Build Corrected Spellcraft Narration V2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'spellcraft/corrected_units*'
+      - '.github/workflows/spellcraft-corrected-rebuild.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        episode: [2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --upgrade pip >/dev/null
+          pip install edge-tts >/dev/null
+
+      - name: Generate corrected Ava narration and captions
+        env:
+          EPISODE: ${{ matrix.episode }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, base64, gzip, json, os, re, subprocess
+          from pathlib import Path
+          import edge_tts
+
+          EP = int(os.environ['EPISODE'])
+          VOICE = 'en-US-AvaMultilingualNeural'
+          RATE = '+2%'
+          PITCH = '-2Hz'
+          OUT = Path('corrected_output')
+          RAW = OUT / 'raw'
+          SEG = OUT / 'segments' / f'ep{EP:02d}'
+          OUT.mkdir(exist_ok=True); RAW.mkdir(exist_ok=True); SEG.mkdir(parents=True, exist_ok=True)
+
+          def run(cmd): subprocess.run(cmd, check=True)
+          def probe(path):
+              return float(subprocess.check_output([
+                  'ffprobe','-v','error','-show_entries','format=duration',
+                  '-of','default=noprint_wrappers=1:nokey=1',str(path)
+              ], text=True).strip())
+          def atempo_chain(ratio):
+              vals=[]; r=ratio
+              while r>2.0: vals.append(2.0); r/=2.0
+              while r<0.5: vals.append(0.5); r/=0.5
+              vals.append(r)
+              return ','.join(f'atempo={v:.8f}' for v in vals)
+          def pronounce(text):
+              reps = [
+                  (r'\bI[\s-]*T[\s-]*C\b', 'eye tee see'),
+                  (r'\bWyspell\b', 'Why-spell'),
+                  (r'\bLo\s+Scarabeo\b', 'loh skah rah BEH oh'),
+                  (r'\bCeromancy\b', 'seer oh man see'),
+                  (r'\bceromancy\b', 'seer oh man see'),
+                  (r'\bPyromancy\b', 'pie roh man see'),
+                  (r'\bpyromancy\b', 'pie roh man see'),
+                  (r'\bLychnomancy\b', 'lick noh man see'),
+                  (r'\blychnomancy\b', 'lick noh man see'),
+                  (r'\bCapnomancy\b', 'cap noh man see'),
+                  (r'\bcapnomancy\b', 'cap noh man see'),
+                  (r'\bMagistellus\b', 'mag iss TELL us'),
+                  (r'\bmagistellus\b', 'mag iss TELL us'),
+                  (r'\bDatura\b', 'duh TOO ruh'),
+                  (r'\bElecampane\b', 'ell uh CAM pane'),
+              ]
+              for pat, repl in reps:
+                  text = re.sub(pat, repl, text)
+              return text
+          def srt_time(seconds):
+              ms=int(round(seconds*1000)); h,ms=divmod(ms,3600000); m,ms=divmod(ms,60000); s,ms=divmod(ms,1000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+          def chunks(text,max_words=18):
+              clean=re.sub(r'\s+',' ',text).strip(); out=[]; cur=[]
+              for sent in re.split(r'(?<=[.!?])\s+',clean):
+                  words=sent.split()
+                  if not words: continue
+                  if cur and len(cur)+len(words)>max_words: out.append(' '.join(cur)); cur=[]
+                  if len(words)>max_words:
+                      if cur: out.append(' '.join(cur)); cur=[]
+                      out.extend(' '.join(words[i:i+max_words]) for i in range(0,len(words),max_words))
+                  else: cur.extend(words)
+              if cur: out.append(' '.join(cur))
+              return out or [clean]
+
+          parts = [Path('spellcraft/corrected_units.json'), Path('spellcraft/corrected_units.part1'), Path('spellcraft/corrected_units.part2'), Path('spellcraft/corrected_units.part3')]
+          b64 = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
+          corrected = json.loads(gzip.decompress(base64.b64decode(b64)).decode('utf-8'))
+
+          rows=[]
+          if EP == 3:
+              with gzip.open(Path('spellcraft_narration') / 'ep3.tsv.gz','rt',encoding='utf-8') as fh:
+                  for line in fh:
+                      line=line.rstrip('\n')
+                      if not line: continue
+                      unit,target,text=line.split('\t',2)
+                      text=text.replace('\\n','\n')
+                      rows.append({'unit':int(unit),'target':float(target),'tts_text':text,'caption_text':text})
+          else:
+              for item in corrected:
+                  if int(item['episode']) == EP:
+                      rows.append({'unit':int(item['unit']),'target':float(item['duration']),'tts_text':item.get('tts_text') or item['caption_text'],'caption_text':item['caption_text']})
+          rows.sort(key=lambda r:r['unit'])
+          if not rows:
+              raise RuntimeError(f'No narration rows found for episode {EP}')
+
+          async def synth(row):
+              target = RAW / f'ep{EP:02d}_unit_{row["unit"]:02d}.mp3'
+              last=None
+              for attempt in range(1,4):
+                  try:
+                      voice_text = pronounce(row['tts_text'])
+                      c=edge_tts.Communicate(text=voice_text,voice=VOICE,rate=RATE,pitch=PITCH)
+                      await asyncio.wait_for(c.save(str(target)), timeout=150)
+                      if target.exists() and target.stat().st_size > 1000:
+                          return target
+                  except Exception as exc:
+                      last=exc
+                      if target.exists(): target.unlink()
+                      if attempt < 3: await asyncio.sleep(4*attempt)
+              raise RuntimeError(f'TTS failed ep{EP} unit {row["unit"]}: {last}')
+
+          async def main():
+              for row in rows:
+                  await synth(row)
+                  await asyncio.sleep(0.30)
+
+              segs=[]; units=[]
+              for row in rows:
+                  raw=RAW/f'ep{EP:02d}_unit_{row["unit"]:02d}.mp3'; raw_dur=probe(raw); target=row['target']
+                  wav=SEG/f'unit_{row["unit"]:02d}.wav'
+                  if raw_dur <= target + 0.015:
+                      mode='pad'; ratio=1.0; af='apad'
+                  else:
+                      mode='atempo'; ratio=raw_dur/target; af=atempo_chain(ratio)
+                  run(['ffmpeg','-y','-v','error','-i',str(raw),'-af',af,'-t',f'{target:.6f}','-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav)])
+                  final_dur=probe(wav)
+                  if abs(final_dur-target) > 0.04:
+                      raise RuntimeError(f'Duration mismatch ep{EP} unit {row["unit"]}: {final_dur} vs {target}')
+                  segs.append(wav)
+                  units.append({'unit':row['unit'],'raw_duration':raw_dur,'target_duration':target,'final_duration':final_dur,'mode':mode,'speed_ratio':ratio})
+
+              concat=SEG/'concat.txt'
+              concat.write_text(''.join(f"file '{p.resolve().as_posix()}'\n" for p in segs),encoding='utf-8')
+              total=sum(r['target'] for r in rows)
+              final_mp3=OUT/f'Episode_{EP:02d}_CORRECTED_Ava_Narration.mp3'
+              run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(concat),'-t',f'{total:.6f}','-ar','48000','-ac','1','-c:a','libmp3lame','-b:a','192k',str(final_mp3)])
+
+              srt=[]; n=1; unit_start=0.0
+              for row in rows:
+                  cc=chunks(row['caption_text']); counts=[max(1,len(c.split())) for c in cc]; denom=sum(counts); cursor=unit_start; unit_end=unit_start+row['target']
+                  for i,(chunk,wc) in enumerate(zip(cc,counts)):
+                      end=unit_end if i==len(cc)-1 else cursor+row['target']*(wc/denom)
+                      srt.extend([str(n),f'{srt_time(cursor)} --> {srt_time(end)}',chunk,'']); n+=1; cursor=end
+                  unit_start=unit_end
+              srt_path=OUT/f'Episode_{EP:02d}_CORRECTED_Ava_Captions.srt'; srt_path.write_text('\n'.join(srt),encoding='utf-8')
+              manifest={'episode':EP,'voice':VOICE,'rate':RATE,'pitch':PITCH,'target_duration':total,'final_audio_duration':probe(final_mp3),'audio':final_mp3.name,'captions':srt_path.name,'units':units}
+              (OUT/f'Episode_{EP:02d}_CORRECTED_Ava_Manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
+
+          asyncio.run(main())
+          PY
+
+      - name: Verify package
+        env:
+          EPISODE: ${{ matrix.episode }}
+        shell: bash
+        run: |
+          ep=$(printf '%02d' "$EPISODE")
+          test -s "corrected_output/Episode_${ep}_CORRECTED_Ava_Narration.mp3"
+          test -s "corrected_output/Episode_${ep}_CORRECTED_Ava_Captions.srt"
+          test -s "corrected_output/Episode_${ep}_CORRECTED_Ava_Manifest.json"
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "corrected_output/Episode_${ep}_CORRECTED_Ava_Narration.mp3"
+
+      - name: Upload corrected episode package
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-episode-${{ matrix.episode }}-corrected-ava
+          path: |
+            corrected_output/Episode_*_CORRECTED_Ava_Narration.mp3
+            corrected_output/Episode_*_CORRECTED_Ava_Captions.srt
+            corrected_output/Episode_*_CORRECTED_Ava_Manifest.json
+          retention-days: 1

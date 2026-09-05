@@ -1,0 +1,56 @@
+name: Build Episode 1 Extra Correction
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/spellcraft-episode1-extra-fix.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install edge-tts
+      - name: Build clip
+        run: |
+          python - <<'PY'
+          import asyncio, subprocess
+          from pathlib import Path
+          import edge_tts
+          out=Path('episode1_extra'); out.mkdir()
+          raw=out/'wyspell_late_1_full_raw.mp3'
+          wav=out/'wyspell_late_1_full.wav'
+          target=7.095
+          text='The Master Edition safety rules and the twenty-minute maximum for multi-candle Why-spell sessions override that wording.'
+          async def go():
+              await edge_tts.Communicate(text=text, voice='en-US-AvaMultilingualNeural', rate='+2%', pitch='-2Hz').save(str(raw))
+          asyncio.run(go())
+          def dur(p):
+              return float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',str(p)],text=True).strip())
+          d=dur(raw)
+          if d<=target:
+              af='apad'
+          else:
+              ratio=d/target
+              vals=[]
+              while ratio>2: vals.append(2.0); ratio/=2
+              while ratio<0.5: vals.append(0.5); ratio/=0.5
+              vals.append(ratio)
+              af=','.join(f'atempo={v:.8f}' for v in vals)
+          subprocess.run(['ffmpeg','-y','-v','error','-i',str(raw),'-af',af,'-t',str(target),'-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav)],check=True)
+          print('raw',d,'final',dur(wav))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-episode1-extra-correction
+          path: episode1_extra/*.wav
+          retention-days: 1
