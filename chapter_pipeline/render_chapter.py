@@ -10,6 +10,7 @@ from kokoro_onnx import Kokoro
 from kokoro_tts import clean, digest_for, synthesize
 from cinematic_scene_renderer_v2 import MOVES, make_scene, render_ken_burns, render_tentpole
 from source_visual_reconstructions import reconstruct_source_visual
+from asset_ingest import canonicalize_asset
 
 VISUAL_VERSION = 'source_reconstruction_v3'
 
@@ -126,7 +127,8 @@ def main() -> None:
     still_dir = args.cache_dir / 'stills_v3'
     video_dir = args.cache_dir / 'video_v3'
     recon_dir = args.cache_dir / 'source_reconstructions_v3'
-    for d in (audio_dir, still_dir, video_dir, recon_dir):
+    sanitized_dir = args.cache_dir / 'sanitized_source_assets'
+    for d in (audio_dir, still_dir, video_dir, recon_dir, sanitized_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     kokoro = Kokoro(str(args.kokoro_model), str(args.kokoro_voices))
@@ -139,6 +141,7 @@ def main() -> None:
     audio_files: list[str] = []
     scene_kinds: list[str] = []
     real_assets_used: list[str] = []
+    rejected_source_assets: list[str] = []
     reconstructions_used: list[str] = []
     animated_reconstructions: set[str] = set()
     dynamic_scene_count = 0
@@ -152,19 +155,29 @@ def main() -> None:
         still = still_dir / f'{visual_stem}.jpg'
         mp4 = video_dir / f'{visual_stem}.mp4'
 
-        # Voice is immutable. Existing Sarah WAVs can be reused from checkpoints.
         if not (wav.exists() and wav.stat().st_size > 1000):
             synthesize(kokoro, beat, wav, voice=voice, speed=speed, lang=lang)
         audio_files.append(wav.name)
 
-        asset = choose_source_asset(beat, args.asset_dir)
+        source_asset = choose_source_asset(beat, args.asset_dir)
+        asset: Path | None = None
         recon_key: str | None = None
-        if asset:
-            real_assets_used.append(asset.name)
-        else:
+        source_label = 'cinematic-fill'
+
+        if source_asset:
+            clean_asset = canonicalize_asset(source_asset, sanitized_dir)
+            if clean_asset:
+                asset = clean_asset
+                real_assets_used.append(source_asset.name)
+                source_label = f'pdf-source:{source_asset.name}'
+            else:
+                rejected_source_assets.append(source_asset.name)
+
+        if not asset:
             asset, recon_key = reconstruct_source_visual(beat, recon_dir)
             if recon_key:
                 reconstructions_used.append(recon_key)
+                source_label = f'reconstruction:{recon_key}'
 
         kind = make_scene(beat, scene_no, still, asset=asset)
         scene_kinds.append(kind)
@@ -184,10 +197,8 @@ def main() -> None:
             dynamic_scene_count += 1
         videos.append(mp4)
         motion = 'object-motion tentpole' if use_dynamic_motion else MOVES[i % len(MOVES)]
-        source = f'reconstruction:{recon_key}' if recon_key else (f'pdf-source:{asset.name}' if asset else 'cinematic-fill')
-        print(f'scene {scene_no}/{len(beats)} complete: {kind} / {motion} / {source} / locked {voice}', flush=True)
+        print(f'scene {scene_no}/{len(beats)} complete: {kind} / {motion} / {source_label} / locked {voice}', flush=True)
 
-    # Chapter 1 is our production proof. It is not allowed to silently fall back to generic visuals again.
     if args.chapter == 1 and not real_assets_used and not reconstructions_used:
         raise SystemExit('Chapter 1 visual QA failed: no clean source assets or source-specific reconstructions were used')
 
@@ -214,9 +225,10 @@ def main() -> None:
         'audio_files': audio_files,
         'source_pages': chapter.get('source_pages', []),
         'real_source_assets_used': sorted(set(real_assets_used)),
+        'rejected_source_assets': sorted(set(rejected_source_assets)),
         'source_visual_reconstructions_used': sorted(set(reconstructions_used)),
         'scene_kinds': scene_kinds,
-        'pipeline': 'locked Sarah voice -> sentence scene -> isolated PDF visual when clean -> source-specific reconstruction when contaminated/unavailable -> cinematic fill only for gaps -> alternating camera motion + recurring object-motion beats -> burned subtitles',
+        'pipeline': 'locked Sarah voice -> sentence scene -> isolated PDF visual -> full pixel decode/sanitize to clean PNG -> source-specific reconstruction on any bad asset -> cinematic fill only for gaps -> alternating camera motion + recurring object-motion beats -> burned subtitles',
     }
     (args.output_dir / f'chapter_{args.chapter:03d}.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
     print(json.dumps(meta, indent=2))
