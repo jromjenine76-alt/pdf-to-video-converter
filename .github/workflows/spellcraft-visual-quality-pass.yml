@@ -60,13 +60,13 @@ jobs:
             chapter_pipeline/source_visual_reconstructions.py \
             chapter_pipeline/kokoro_tts.py
 
-      - name: Render Chapter 1 with user-extracted source visuals and locked Sarah
+      - name: Render Chapter 1 with pixel-validated source visuals and locked Sarah
         run: |
           python chapter_pipeline/render_chapter_visual_quality.py \
             --chapter 1 \
             --catalog chapter_pipeline/catalog.json \
             --output-dir chapter_output_visual \
-            --cache-dir .chapter_cache_visual_v4 \
+            --cache-dir .chapter_cache_visual_v5 \
             --voice-config chapter_pipeline/VOICE_CONFIG.json \
             --kokoro-model .kokoro/kokoro-v1.0.onnx \
             --kokoro-voices .kokoro/voices-v1.0.bin \
@@ -81,8 +81,10 @@ jobs:
           from pathlib import Path
           meta = json.loads(Path('chapter_output_visual/chapter_001.json').read_text())
           assert meta['voice'] == 'af_sarah' and meta['voice_locked'] is True
-          assert meta.get('visual_version') == 'user_source_visuals_v4'
+          assert meta.get('visual_version') == 'user_source_visuals_v5'
           used = set(meta.get('real_source_assets_used', []))
+          rejected = set(meta.get('rejected_source_assets', []))
+          recon = set(meta.get('source_visual_reconstructions_used', []))
           required_any = {
               'lo_scarabeo_tools.jpg',
               'wyspell_candle_colors.jpg',
@@ -91,7 +93,11 @@ jobs:
               'wyspell_kit_box.jpg',
           }
           matched = sorted(used & required_any)
-          assert len(matched) >= 3, f'Visual QA failed: only {matched} from the user-extracted pack were used'
+          assert len(matched) >= 3, f'Visual QA failed: only {matched} from the user-extracted pack were visually usable'
+          # If a branded source image is rejected by pixel-health validation, the chapter
+          # must still retain branded/source-specific teaching coverage instead of an empty card.
+          if 'lo_scarabeo_tools.jpg' in rejected:
+              assert 'lo_scarabeo_kit' in recon, 'Lo Scarabeo source was rejected without a source-specific reconstruction'
           assert int(meta.get('dynamic_object_motion_scenes', 0)) >= 12, meta.get('dynamic_object_motion_scenes')
           probe = json.loads(subprocess.check_output([
               'ffprobe','-v','error','-show_streams','-of','json','chapter_output_visual/chapter_001.mp4'
@@ -101,8 +107,9 @@ jobs:
           assert v.get('codec_name') == 'h264'
           assert (int(v.get('width',0)), int(v.get('height',0))) == (1920,1080)
           assert a.get('codec_name') == 'aac'
-          print('user source visuals used:', matched)
-          print('rejected source visuals:', meta.get('rejected_source_assets', []))
+          print('visually usable user source visuals:', matched)
+          print('pixel-health rejected source visuals:', sorted(rejected))
+          print('source-specific reconstructions:', sorted(recon))
           print('dynamic object-motion scenes:', meta.get('dynamic_object_motion_scenes'))
           print('visual quality gate passed')
           PY
@@ -110,7 +117,7 @@ jobs:
       - name: Upload Chapter 1 visual-quality proof
         uses: actions/upload-artifact@v4
         with:
-          name: spellcraft-chapter-1-visual-quality-v4
+          name: spellcraft-chapter-1-visual-quality-v5
           path: |
             chapter_output_visual/chapter_001.mp4
             chapter_output_visual/chapter_001.json
