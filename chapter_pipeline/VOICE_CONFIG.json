@@ -1,0 +1,9 @@
+{
+  "provider": "kokoro",
+  "voice": "af_sarah",
+  "speed": 0.96,
+  "language": "en-us",
+  "approved": true,
+  "locked": true,
+  "purpose": "Final Spellcraft narration voice"
+}
