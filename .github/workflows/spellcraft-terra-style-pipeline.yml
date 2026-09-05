@@ -11,6 +11,11 @@ on:
         description: Last chapter adapter ID to render
         required: false
         default: '8'
+  push:
+    branches:
+      - spellcraft-terra-style-pipeline-v1
+    paths:
+      - 'production_trigger/chapter1.txt'
 
 permissions:
   contents: read
@@ -34,14 +39,17 @@ jobs:
           import json
           import os
 
-          start = max(1, int(os.environ["CHAPTER_START"]))
-          end = min(8, int(os.environ["CHAPTER_END"]))
+          start_raw = os.environ.get('CHAPTER_START', '').strip()
+          end_raw = os.environ.get('CHAPTER_END', '').strip()
+          start = max(1, int(start_raw or '1'))
+          end = min(8, int(end_raw or str(start)))
           if start > end:
-              raise SystemExit("chapter_start must be less than or equal to chapter_end")
+              raise SystemExit('chapter_start must be less than or equal to chapter_end')
 
           chapters = json.dumps(list(range(start, end + 1)))
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write(f"chapters={chapters}\n")
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as fh:
+              fh.write(f'chapters={chapters}\n')
+          print('selected chapters:', chapters)
           PY
 
   render-chapter:
@@ -95,11 +103,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .chapter_cache
-          key: spellcraft-c${{ matrix.chapter }}-${{ hashFiles('spellcraft_narration/**', 'spellcraft_animated_renderer.py', 'chapter_pipeline/render_chapter.py', 'chapter_pipeline/kokoro_tts.py', 'chapter_pipeline/VOICE_CONFIG.json') }}
+          key: spellcraft-c${{ matrix.chapter }}-${{ hashFiles('spellcraft_narration/**', 'chapter_pipeline/render_chapter.py', 'chapter_pipeline/cinematic_scene_renderer.py', 'chapter_pipeline/kokoro_tts.py', 'chapter_pipeline/VOICE_CONFIG.json') }}
           restore-keys: |
             spellcraft-c${{ matrix.chapter }}-
 
-      - name: Generate locked Sarah narration and illustrated video in resumable chunks
+      - name: Generate locked Sarah narration and cinematic scene film
         run: |
           python chapter_pipeline/render_chapter.py \
             --chapter ${{ matrix.chapter }} \
@@ -108,7 +116,8 @@ jobs:
             --cache-dir .chapter_cache \
             --voice-config chapter_pipeline/VOICE_CONFIG.json \
             --kokoro-model .kokoro/kokoro-v1.0.onnx \
-            --kokoro-voices .kokoro/voices-v1.0.bin
+            --kokoro-voices .kokoro/voices-v1.0.bin \
+            --asset-dir chapter_pipeline/source_assets
 
       - name: Verify chapter MP4 and locked voice metadata
         run: |
@@ -122,7 +131,12 @@ jobs:
           assert meta['voice_provider'] == 'kokoro'
           assert meta['voice'] == 'af_sarah'
           assert meta['voice_locked'] is True
+          assert meta['scenes'] >= 1
+          assert meta['tentpole_motion_scenes'] >= 1
+          assert 'sentence scene' in meta['pipeline']
           print('locked voice verified:', meta['voice'])
+          print('cinematic scenes:', meta['scenes'])
+          print('tentpole scenes:', meta['tentpole_motion_scenes'])
           PY
           ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json "$chapter_mp4"
 
