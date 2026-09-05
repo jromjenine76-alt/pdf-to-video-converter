@@ -14,5 +14,5 @@ This repository has both optional and required secret usage in workflows.
 
 ## Trigger/consistency expectations
 
-- `spellcraft-key-check.yml` should run on normal push/PR activity (plus manual dispatch) without restrictive path filters.
+- `spellcraft-key-check.yml` should run on all pushes, pull requests, and manual dispatch without restrictive path filters.
 - Workflow linting in `.github/workflows/workflow-validation.yml` is used to catch workflow syntax/config regressions early.
