@@ -42,6 +42,7 @@ jobs:
           VOICE = "en-US-AvaMultilingualNeural"
           RATE = "+2%"
           PITCH = "-2Hz"
+          RAW_PADDING_TOLERANCE = 0.015
           SEGMENT_DURATION_TOLERANCE = 0.03
           FINAL_DURATION_TOLERANCE = 0.15
           EPISODES = [int(ep) for ep in os.environ["SPELLCRAFT_EPISODES"].split()]
@@ -182,23 +183,23 @@ jobs:
               all_rows = {ep: read_rows(ep) for ep in EPISODES}
               sem = asyncio.Semaphore(4)
 
-              synth_tasks = []
-              synth_targets = {}
               for ep, rows in all_rows.items():
+                  synth_tasks = []
+                  synth_targets = {}
                   for row in rows:
                       task = asyncio.create_task(synth_one(ep, row, sem))
                       synth_tasks.append(task)
                       synth_targets[task] = RAW / f"ep{ep:02d}_unit_{row['unit']:02d}.mp3"
-              try:
-                  await asyncio.gather(*synth_tasks)
-              except Exception:
-                  for task in synth_tasks:
-                      task.cancel()
-                  await asyncio.gather(*synth_tasks, return_exceptions=True)
-                  for task, target in synth_targets.items():
-                      if (task.cancelled() or task.exception() is not None) and target.exists():
-                          target.unlink()
-                  raise
+                  try:
+                      await asyncio.gather(*synth_tasks)
+                  except Exception:
+                      for task in synth_tasks:
+                          task.cancel()
+                      await asyncio.gather(*synth_tasks, return_exceptions=True)
+                      for task, target in synth_targets.items():
+                          if (task.cancelled() or task.exception() is not None) and target.exists():
+                              target.unlink()
+                      raise
 
               manifest = {
                   "voice": VOICE,
@@ -224,7 +225,7 @@ jobs:
                       target = row["target"]
                       wav = epseg / f"unit_{row['unit']:02d}.wav"
 
-                      if raw_dur <= target + 0.015:
+                      if raw_dur <= target + RAW_PADDING_TOLERANCE:
                           mode = "pad"
                           run(
                               [

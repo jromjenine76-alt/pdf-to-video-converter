@@ -1,6 +1,7 @@
 name: Spellcraft Key Check
 
 on:
+  # Intentionally unfiltered so this informational check runs on every repository push.
   push:
   pull_request:
   workflow_dispatch:
