@@ -1,0 +1,4 @@
+Start Spellcraft Terra-style production proof.
+Locked narration voice: Kokoro af_sarah.
+Render target: chapter 1 only.
+Pipeline: voice first -> one scene per sentence -> cinematic full-screen illustration -> alternating Ken Burns -> three tentpole motion scenes -> burned subtitles -> H.264/AAC faststart.
