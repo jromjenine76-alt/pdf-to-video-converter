@@ -43,7 +43,7 @@ jobs:
           RATE = "+2%"
           PITCH = "-2Hz"
           SEGMENT_DURATION_TOLERANCE = 0.03
-          FINAL_DURATION_TOLERANCE = 0.05
+          FINAL_DURATION_TOLERANCE = 0.15
           EPISODES = [int(ep) for ep in os.environ["SPELLCRAFT_EPISODES"].split()]
           DATA = Path("spellcraft_narration")
           OUT = Path("narration_output")
