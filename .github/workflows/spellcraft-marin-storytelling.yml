@@ -80,7 +80,7 @@ jobs:
 
           def mark_skipped(message):
               STATUS_FILE.write_text(
-                  json.dumps({"skip_reason": "billing_not_active", "message": message}),
+                  json.dumps({"skip_reason": "billing_not_active"}),
                   encoding="utf-8",
               )
               raise SystemExit(42)
@@ -263,23 +263,7 @@ jobs:
             status=$?
             if [ "$status" -eq 42 ]; then
               echo "skipped=true" >> "$GITHUB_OUTPUT"
-              warning_message="$(python - <<'PY'
-          import json, os
-          from pathlib import Path
-
-          message = "OpenAI billing is not active for this repository key."
-          status_path = Path(os.environ["GENERATION_STATUS_FILE"])
-          if status_path.exists():
-              try:
-                  payload = json.loads(status_path.read_text(encoding="utf-8"))
-              except json.JSONDecodeError:
-                  payload = {}
-              message = payload.get("message") or message
-          print(message)
-          PY
-          )"
-              printf 'OpenAI billing response: %s\n' "$warning_message"
-              echo "::warning::${warning_message} Skipping Marin narration build."
+              echo "::warning::OpenAI billing is not active for this repository key; skipping Marin narration build."
               exit 0
             fi
             exit "$status"
