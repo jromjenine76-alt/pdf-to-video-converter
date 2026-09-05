@@ -1,0 +1,157 @@
+name: Spellcraft Animated V2 Autobuild
+
+on:
+  push:
+    branches: [spellcraft-animated-walkthrough-v2]
+    paths:
+      - 'spellcraft_animated_renderer.py'
+      - '.github/workflows/spellcraft-animated-autobuild.yml'
+      - 'spellcraft/**'
+      - 'spellcraft_narration/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  render:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        episode: [1,2,3,4,5,6,7,8]
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spellcraft-animated-walkthrough-v2
+
+      - name: Install video and speech tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-freefont-ttf
+          python -m pip install --upgrade pip >/dev/null
+          pip install -r requirements.txt edge-tts >/dev/null
+
+      - name: Build episode manifest
+        env:
+          EP: ${{ matrix.episode }}
+        run: |
+          mkdir -p build/manifests build/narration/ep${EP} output
+          python - <<'PY'
+          import gzip, json, os
+          from pathlib import Path
+          ep=int(os.environ['EP'])
+          tsv=Path('spellcraft_narration')/f'ep{ep}.tsv.gz'
+          if not tsv.exists():
+              raise SystemExit(f'Missing {tsv}')
+          rows=[]
+          with gzip.open(tsv,'rt',encoding='utf-8') as fh:
+              for line in fh:
+                  if not line.strip(): continue
+                  unit,target,text=line.rstrip('\n').split('\t',2)
+                  rows.append({
+                      'episode':ep,
+                      'unit':int(unit),
+                      'text':text.replace('\\n','\n'),
+                      'heading':f'Spellcraft Manual · Episode {ep}',
+                      'old_target_duration':float(target),
+                  })
+          Path(f'build/manifests/ep{ep}.json').write_text(json.dumps({'episode':ep,'units':rows},indent=2),encoding='utf-8')
+          print(f'episode {ep}: {len(rows)} narration units')
+          PY
+
+      - name: Create narration with Marin, fallback to neural voice
+        env:
+          EP: ${{ matrix.episode }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import asyncio, json, os, re
+          from pathlib import Path
+          import edge_tts
+
+          ep=int(os.environ['EP'])
+          key=os.environ.get('OPENAI_API_KEY','').strip()
+          manifest=json.loads(Path(f'build/manifests/ep{ep}.json').read_text(encoding='utf-8'))
+          out=Path(f'build/narration/ep{ep}'); out.mkdir(parents=True,exist_ok=True)
+          replacements=[
+              (r'\bI[\s-]*T[\s-]*C\b','eye tee see'),
+              (r'\bWyspell\b','Why-spell'),
+              (r'\bLo\s+Scarabeo\b','loh skah rah BEH oh'),
+              (r'\b[Cc]eromancy\b','seer oh man see'),
+              (r'\b[Pp]yromancy\b','pie roh man see'),
+              (r'\b[Ll]ychnomancy\b','lick noh man see'),
+              (r'\b[Cc]apnomancy\b','cap noh man see'),
+              (r'\b[Mm]agistellus\b','mag iss TELL us'),
+          ]
+          def clean(text):
+              for a,b in replacements: text=re.sub(a,b,text)
+              return text
+
+          async def edge(text, target):
+              tmp=target.with_suffix('.mp3')
+              # Ava Multilingual is one of Edge's smoother long-form neural voices.
+              await edge_tts.Communicate(text, voice='en-US-AvaMultilingualNeural', rate='-4%').save(str(tmp))
+              os.system(f"ffmpeg -y -v error -i '{tmp}' -ar 48000 -ac 1 -c:a pcm_s16le '{target}'")
+              tmp.unlink(missing_ok=True)
+
+          openai_client=None
+          if key:
+              try:
+                  from openai import OpenAI
+                  openai_client=OpenAI(api_key=key)
+              except Exception:
+                  openai_client=None
+
+          for row in manifest['units']:
+              uid=int(row['unit']); target=out/f'unit_{uid:02d}.wav'; text=clean(row['text'])
+              if target.exists() and target.stat().st_size>1000: continue
+              made=False
+              if openai_client is not None:
+                  try:
+                      with openai_client.audio.speech.with_streaming_response.create(
+                          model='gpt-4o-mini-tts', voice='marin', input=text,
+                          instructions='Warm natural human-like feminine educational narration; smooth connected phrasing; calm, expressive, no robotic cadence or announcer tone.',
+                          response_format='wav') as r:
+                          r.stream_to_file(target)
+                      made=target.exists() and target.stat().st_size>1000
+                  except Exception as exc:
+                      print(f'Marin unavailable for unit {uid}: {exc}')
+                      target.unlink(missing_ok=True)
+              if not made:
+                  asyncio.run(edge(text,target))
+              if not target.exists() or target.stat().st_size<1000:
+                  raise SystemExit(f'Failed narration unit {uid}')
+          PY
+
+      - name: Render animated educational episode
+        env:
+          EP: ${{ matrix.episode }}
+        run: |
+          python spellcraft_animated_renderer.py \
+            --manifest build/manifests/ep${EP}.json \
+            --audio-dir build/narration/ep${EP} \
+            --episode ${EP} \
+            --output output/Spellcraft_Episode_${EP}_ANIMATED_V2.mp4
+
+      - name: Verify
+        env:
+          EP: ${{ matrix.episode }}
+        run: |
+          test -s output/Spellcraft_Episode_${EP}_ANIMATED_V2.mp4
+          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json output/Spellcraft_Episode_${EP}_ANIMATED_V2.mp4
+
+      - name: Upload episode
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-episode-${{ matrix.episode }}-animated-v2
+          path: output/Spellcraft_Episode_${{ matrix.episode }}_ANIMATED_V2.mp4
+          retention-days: 7
