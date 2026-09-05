@@ -19,13 +19,38 @@ env:
   PYTHONUNBUFFERED: '1'
 
 jobs:
+  select-chapters:
+    runs-on: ubuntu-latest
+    outputs:
+      chapters: ${{ steps.matrix.outputs.chapters }}
+    steps:
+      - name: Resolve requested chapters
+        id: matrix
+        env:
+          CHAPTER_START: ${{ inputs.chapter_start }}
+          CHAPTER_END: ${{ inputs.chapter_end }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          start = max(1, int(os.environ["CHAPTER_START"]))
+          end = min(8, int(os.environ["CHAPTER_END"]))
+          if start > end:
+              raise SystemExit("chapter_start must be less than or equal to chapter_end")
+
+          chapters = json.dumps(list(range(start, end + 1)))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"chapters={chapters}\n")
+          PY
+
   render-chapter:
+    needs: select-chapters
     strategy:
       fail-fast: false
       max-parallel: 8
       matrix:
-        chapter: [1,2,3,4,5,6,7,8]
-    if: ${{ matrix.chapter >= fromJSON(inputs.chapter_start) && matrix.chapter <= fromJSON(inputs.chapter_end) }}
+        chapter: ${{ fromJSON(needs.select-chapters.outputs.chapters) }}
     runs-on: ubuntu-latest
     timeout-minutes: 355
 
@@ -64,8 +89,9 @@ jobs:
 
       - name: Verify chapter MP4
         run: |
-          test -s chapter_output/chapter_$(printf '%03d' ${{ matrix.chapter }}).mp4
-          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json chapter_output/chapter_$(printf '%03d' ${{ matrix.chapter }}).mp4
+          chapter_mp4="chapter_output/chapter_$(printf '%03d' '${{ matrix.chapter }}').mp4"
+          test -s "$chapter_mp4"
+          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json "$chapter_mp4"
 
       - name: Upload completed chapter checkpoint
         uses: actions/upload-artifact@v4
