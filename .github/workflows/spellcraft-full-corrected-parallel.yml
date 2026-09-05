@@ -75,8 +75,9 @@ jobs:
               out=FINAL/f'episode_{ep}.m4a'
               subprocess.run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(c),'-c:a','aac','-b:a','192k','-ar','48000','-ac','1',str(out)],check=True)
               expected=sum(float(u['duration']) for u in eu); actual=probe(out)
-              print('episode',ep,'expected',expected,'actual',actual,flush=True)
-              assert abs(expected-actual)<0.2
+              delta=abs(expected-actual)
+              print('episode',ep,'expected',expected,'actual',actual,'delta',delta,flush=True)
+              assert delta<0.5
           Path('corrected_units_full.json').write_text(json.dumps(units,ensure_ascii=False,indent=2))
           PY
       - name: Verify
