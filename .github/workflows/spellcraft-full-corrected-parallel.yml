@@ -1,0 +1,92 @@
+name: Build Full Corrected Spellcraft Audio Parallel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/spellcraft-full-corrected-parallel.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pip install edge-tts
+      - name: Build corrected episode audio in parallel
+        run: |
+          python - <<'PY'
+          import asyncio, base64, gzip, json, subprocess, shutil
+          from pathlib import Path
+          import edge_tts
+
+          parts=[Path('spellcraft/corrected_units.json'),Path('spellcraft/corrected_units.part1'),Path('spellcraft/corrected_units.part2'),Path('spellcraft/corrected_units.part3')]
+          encoded=''.join(p.read_text().strip() for p in parts)
+          units=json.loads(gzip.decompress(base64.b64decode(encoded)))
+          assert len(units)==83
+          ROOT=Path('work'); ROOT.mkdir()
+          FINAL=Path('corrected_audio'); FINAL.mkdir()
+          sem=asyncio.Semaphore(4)
+          VOICE='en-US-AvaMultilingualNeural'; RATE='+2%'; PITCH='-2Hz'
+
+          def probe(p):
+              return float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',str(p)],text=True).strip())
+          def atempo(r):
+              vals=[]
+              while r>2: vals.append(2.0); r/=2
+              while r<0.5: vals.append(0.5); r/=0.5
+              vals.append(r)
+              return ','.join(f'atempo={v:.8f}' for v in vals)
+          async def one(u):
+              async with sem:
+                  ep=int(u['episode']); num=int(u['unit']); target=float(u['duration'])
+                  d=ROOT/f'ep{ep:02d}'; d.mkdir(exist_ok=True)
+                  raw=d/f'u{num:02d}.mp3'; wav=d/f'u{num:02d}.wav'
+                  for attempt in range(5):
+                      try:
+                          await edge_tts.Communicate(text=u['tts_text'],voice=VOICE,rate=RATE,pitch=PITCH).save(str(raw))
+                          if raw.exists() and raw.stat().st_size>0: break
+                      except Exception:
+                          if attempt==4: raise
+                          await asyncio.sleep(2*(attempt+1))
+                  dur=probe(raw)
+                  af='apad' if dur<=target+0.02 else atempo(dur/target)
+                  proc=await asyncio.create_subprocess_exec('ffmpeg','-y','-v','error','-i',str(raw),'-af',af,'-t',f'{target:.6f}','-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav))
+                  rc=await proc.wait()
+                  if rc: raise RuntimeError(('ffmpeg',ep,num,rc))
+                  raw.unlink(missing_ok=True)
+                  print('done',ep,num,flush=True)
+          async def main():
+              await asyncio.gather(*(one(u) for u in units))
+          asyncio.run(main())
+
+          for ep in sorted({int(u['episode']) for u in units}):
+              eu=sorted([u for u in units if int(u['episode'])==ep],key=lambda x:int(x['unit']))
+              d=ROOT/f'ep{ep:02d}'
+              c=d/'concat.txt'
+              c.write_text('\n'.join("file '"+str((d/f"u{int(u['unit']):02d}.wav").resolve())+"'" for u in eu)+'\n')
+              out=FINAL/f'episode_{ep}.m4a'
+              subprocess.run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(c),'-c:a','aac','-b:a','192k','-ar','48000','-ac','1',str(out)],check=True)
+              expected=sum(float(u['duration']) for u in eu); actual=probe(out)
+              print('episode',ep,'expected',expected,'actual',actual,flush=True)
+              assert abs(expected-actual)<0.2
+          Path('corrected_units_full.json').write_text(json.dumps(units,ensure_ascii=False,indent=2))
+          PY
+      - name: Verify
+        run: |
+          set -e
+          for e in 2 4 5 6 7 8; do test -s corrected_audio/episode_$e.m4a; ffprobe -v error corrected_audio/episode_$e.m4a >/dev/null; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-full-corrected-audio-parallel
+          path: |
+            corrected_audio/
+            corrected_units_full.json
+          retention-days: 1
