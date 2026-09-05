@@ -4,11 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from PIL import Image
-
 import render_chapter as rc
+from asset_ingest import canonicalize_asset
 
 ASSET_DIR = Path('chapter_pipeline/source_assets')
+PREFLIGHT_DIR = Path('.chapter_asset_preflight')
 REQUIRED = {
     'lo_scarabeo_tools.jpg',
     'wyspell_candle_colors.jpg',
@@ -19,25 +19,32 @@ REQUIRED = {
 
 
 def install_user_assets() -> list[str]:
-    """Validate the recovered source visuals committed directly as binary JPEGs."""
+    """Fully decode/salvage required visuals before scene 1 so a bad JPEG cannot fail mid-render."""
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
-    installed: list[str] = []
+    good: list[str] = []
+    bad: list[str] = []
     for name in sorted(REQUIRED):
         target = ASSET_DIR / name
         if not target.exists():
-            raise SystemExit(f'Missing direct recovered source visual: {target}')
-        try:
-            with Image.open(target) as image:
-                image.verify()
-            with Image.open(target) as image:
-                width, height = image.size
-                if width < 100 or height < 100:
-                    raise ValueError(f'image dimensions too small: {width}x{height}')
-        except Exception as exc:
-            raise SystemExit(f'Direct recovered source visual failed Pillow validation for {name}: {exc}') from exc
-        installed.append(name)
-    print('validated direct recovered user source visuals:', ', '.join(installed), flush=True)
-    return installed
+            bad.append(name)
+            print(f'preflight missing source visual: {name}', flush=True)
+            continue
+        clean = canonicalize_asset(target, PREFLIGHT_DIR)
+        if clean:
+            good.append(name)
+            print(f'preflight OK: {name} -> {clean.name}', flush=True)
+        else:
+            bad.append(name)
+            print(f'preflight rejected source visual: {name}', flush=True)
+
+    # The workflow gate requires at least three real user visuals. Detect that immediately,
+    # before TTS and video rendering consume minutes/hours.
+    if len(good) < 3:
+        raise SystemExit(
+            f'Visual asset preflight stopped before render: only {len(good)} usable source visuals; bad/missing={bad}'
+        )
+    print(f'asset preflight passed before render: {len(good)}/{len(REQUIRED)} usable', flush=True)
+    return good
 
 
 _original_choose = rc.choose_source_asset
