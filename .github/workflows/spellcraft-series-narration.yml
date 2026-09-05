@@ -191,26 +191,7 @@ jobs:
               return chunks or [clean]
 
           async def main():
-              all_rows = {ep: read_rows(ep) for ep in EPISODES}
               sem = asyncio.Semaphore(4)
-
-              for ep, rows in all_rows.items():
-                  synth_tasks = []
-                  synth_targets = {}
-                  for row in rows:
-                      task = asyncio.create_task(synth_one(ep, row, sem))
-                      synth_tasks.append(task)
-                      synth_targets[task] = RAW / f"ep{ep:02d}_unit_{row['unit']:02d}.mp3"
-                  try:
-                      await asyncio.gather(*synth_tasks)
-                  except Exception:
-                      for task in synth_tasks:
-                          task.cancel()
-                      await asyncio.gather(*synth_tasks, return_exceptions=True)
-                      for task, target in synth_targets.items():
-                          if (task.cancelled() or task.exception() is not None) and target.exists():
-                              target.unlink()
-                      raise
 
               manifest = {
                   "voice": VOICE,
@@ -231,7 +212,25 @@ jobs:
                   "episodes": {},
               }
 
-              for ep, rows in all_rows.items():
+              for ep in EPISODES:
+                  rows = read_rows(ep)
+                  synth_tasks = []
+                  synth_targets = {}
+                  for row in rows:
+                      task = asyncio.create_task(synth_one(ep, row, sem))
+                      synth_tasks.append(task)
+                      synth_targets[task] = RAW / f"ep{ep:02d}_unit_{row['unit']:02d}.mp3"
+                  try:
+                      await asyncio.gather(*synth_tasks)
+                  except Exception:
+                      for task in synth_tasks:
+                          task.cancel()
+                      await asyncio.gather(*synth_tasks, return_exceptions=True)
+                      for task, target in synth_targets.items():
+                          if (task.cancelled() or task.exception() is not None) and target.exists():
+                              target.unlink()
+                      raise
+
                   epseg = SEG / f"ep{ep:02d}"
                   epseg.mkdir(exist_ok=True)
                   unit_manifest = []
