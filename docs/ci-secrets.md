@@ -6,6 +6,8 @@ This repository has both optional and required secret usage in workflows.
 
 - `OPENAI_API_KEY` in `.github/workflows/spellcraft-key-check.yml` is optional.
 - The key-check workflow is informational. If the secret is missing, it emits a warning and still passes.
+- `OPENAI_API_KEY` in `.github/workflows/spellcraft-marin-storytelling.yml` is also optional.
+- The Marin storytelling workflow warns and skips narration generation when the secret is missing or billing is inactive.
 
 ## Required secret
 
