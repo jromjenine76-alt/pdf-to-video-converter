@@ -1,0 +1,1 @@
+Direct binary JPEG assets are committed via the Git data API so Pillow can open them without runtime Base64 truncation. Legacy *.b64 files remain for provenance but are no longer canonical.
