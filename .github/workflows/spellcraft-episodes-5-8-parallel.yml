@@ -13,6 +13,10 @@ permissions:
 env:
   PYTHONUNBUFFERED: '1'
 
+concurrency:
+  group: spellcraft-episodes-5-8-parallel
+  cancel-in-progress: true
+
 jobs:
   render:
     strategy:
@@ -149,5 +153,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: spellcraft-episode-${{ matrix.episode }}-animated-v2-parallel
-          path: output/Spellcraft_Episode_${EP}_ANIMATED_V2.mp4
+          path: output/Spellcraft_Episode_${{ matrix.episode }}_ANIMATED_V2.mp4
           retention-days: 7
