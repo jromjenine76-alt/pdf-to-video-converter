@@ -42,6 +42,7 @@ jobs:
           VOICE = "en-US-AvaMultilingualNeural"
           RATE = "+2%"
           PITCH = "-2Hz"
+          TTS_REQUEST_TIMEOUT = 180
           RAW_PADDING_TOLERANCE = 0.015
           SEGMENT_DURATION_TOLERANCE = 0.03
           FINAL_DURATION_TOLERANCE = 0.15
@@ -74,6 +75,13 @@ jobs:
 
           def pronounce(text):
               text = re.sub(r"\bI[\s-]*T[\s-]*C\b", "eye tee see", text, flags=re.I)
+              text = re.sub(r"\bWyspell\b", "why spell", text, flags=re.I)
+              text = re.sub(r"\bPyromancy\b", "pie rom an see", text, flags=re.I)
+              text = re.sub(r"\bLychnomancy\b", "lick no man see", text, flags=re.I)
+              text = re.sub(r"\bCapnomancy\b", "cap no man see", text, flags=re.I)
+              text = re.sub(r"\bMagistellus\b", "maj ih STELL us", text, flags=re.I)
+              text = re.sub(r"\bDatura\b", "duh TOO ruh", text, flags=re.I)
+              text = re.sub(r"\bElecampane\b", "el eh cam pane", text, flags=re.I)
               text = re.sub(r"\bceromancy\b", "seer oh man see", text, flags=re.I)
               text = re.sub(r"\bLo\s+Scarabeo\b", "loh skah rah BEH oh", text, flags=re.I)
               return text
@@ -110,7 +118,10 @@ jobs:
                               rate=RATE,
                               pitch=PITCH,
                           )
-                          await communicate.save(str(target))
+                          await asyncio.wait_for(
+                              communicate.save(str(target)),
+                              timeout=TTS_REQUEST_TIMEOUT,
+                          )
                           if target.exists() and target.stat().st_size > 1000:
                               return target
                           last = RuntimeError(
