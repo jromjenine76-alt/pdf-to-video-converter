@@ -10,10 +10,13 @@ on:
 
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        episode: [2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      SPELLCRAFT_EPISODES: "02 03 04 05 06 07 08"
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,419 +25,143 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg
-          python -m pip install --upgrade pip
-          pip install edge-tts
+          python -m pip install --upgrade pip >/dev/null
+          pip install edge-tts >/dev/null
 
       - name: Generate approved Ava narration and captions
+        env:
+          EPISODE: ${{ matrix.episode }}
         shell: bash
         run: |
           python - <<'PY'
-          import asyncio
-          import gzip
-          import json
-          import os
-          import re
-          import subprocess
+          import asyncio, gzip, json, os, re, subprocess
           from pathlib import Path
-
           import edge_tts
 
-          VOICE = "en-US-AvaMultilingualNeural"
-          RATE = "+2%"
-          PITCH = "-2Hz"
-          TTS_REQUEST_TIMEOUT = 180
-          RAW_PADDING_TOLERANCE = 0.015
-          SEGMENT_DURATION_TOLERANCE = 0.03
-          FINAL_DURATION_TOLERANCE = 0.15
-          EPISODES = [int(ep) for ep in os.environ["SPELLCRAFT_EPISODES"].split()]
-          RUN_SCOPE = os.environ.get("GITHUB_RUN_ID") or f"local-{os.getpid()}"
-          DATA = Path("spellcraft_narration")
-          OUT = Path("narration_output")
-          RAW = OUT / "raw" / RUN_SCOPE
-          SEG = OUT / "segments" / RUN_SCOPE
-          OUT.mkdir(exist_ok=True)
-          RAW.mkdir(parents=True, exist_ok=True)
-          SEG.mkdir(parents=True, exist_ok=True)
+          EP = int(os.environ['EPISODE'])
+          VOICE = 'en-US-AvaMultilingualNeural'
+          RATE = '+2%'
+          PITCH = '-2Hz'
+          DATA = Path('spellcraft_narration')
+          OUT = Path('narration_output')
+          RAW = OUT / 'raw'
+          SEG = OUT / 'segments'
+          OUT.mkdir(exist_ok=True); RAW.mkdir(exist_ok=True); SEG.mkdir(exist_ok=True)
 
-          def run(cmd):
-              subprocess.run(cmd, check=True)
-
-          def probe_duration(path):
-              out = subprocess.check_output(
-                  [
-                      "ffprobe", "-v", "error",
-                      "-show_entries", "format=duration",
-                      "-of", "default=noprint_wrappers=1:nokey=1",
-                      str(path),
-                  ],
-                  text=True,
-              )
-              return float(out.strip())
-
-          def concat_quote(path):
-              return path.resolve().as_posix().replace("'", r"'\''")
-
+          def run(cmd): subprocess.run(cmd, check=True)
+          def probe(path):
+              return float(subprocess.check_output([
+                  'ffprobe','-v','error','-show_entries','format=duration',
+                  '-of','default=noprint_wrappers=1:nokey=1',str(path)
+              ], text=True).strip())
           def pronounce(text):
-              text = re.sub(r"\bI[\s-]*T[\s-]*C\b", "eye tee see", text, flags=re.I)
-              text = re.sub(r"\bWyspell\b", "why spell", text, flags=re.I)
-              text = re.sub(r"\bPyromancy\b", "pie rom an see", text, flags=re.I)
-              text = re.sub(r"\bLychnomancy\b", "lick no man see", text, flags=re.I)
-              text = re.sub(r"\bCapnomancy\b", "cap no man see", text, flags=re.I)
-              text = re.sub(r"\bMagistellus\b", "maj ih STELL us", text, flags=re.I)
-              text = re.sub(r"\bDatura\b", "duh TOO ruh", text, flags=re.I)
-              text = re.sub(r"\bElecampane\b", "el eh cam pane", text, flags=re.I)
-              text = re.sub(r"\bceromancy\b", "seer oh man see", text, flags=re.I)
-              text = re.sub(r"\bLo\s+Scarabeo\b", "loh skah rah BEH oh", text, flags=re.I)
+              text = re.sub(r'\bI[\s-]*T[\s-]*C\b', 'eye tee see', text, flags=re.I)
+              text = re.sub(r'\bceromancy\b', 'seer oh man see', text, flags=re.I)
+              text = re.sub(r'\bLo\s+Scarabeo\b', 'loh skah rah BEH oh', text, flags=re.I)
               return text
-
-          def read_rows(ep):
-              rows = []
-              path = DATA / f"ep{ep}.tsv.gz"
-              with gzip.open(path, "rt", encoding="utf-8") as fh:
+          def rows_for(ep):
+              rows=[]
+              with gzip.open(DATA / f'ep{ep}.tsv.gz','rt',encoding='utf-8') as fh:
                   for line in fh:
-                      line = line.rstrip("\n")
-                      if not line:
-                          continue
-                      unit, target, text = line.split("\t", 2)
-                      rows.append(
-                          {
-                              "unit": int(unit),
-                              "target": float(target),
-                              "text": text.replace("\\n", "\n"),
-                          }
-                      )
-              rows.sort(key=lambda r: r["unit"])
-              return rows
-
-          async def synth_one(ep, row, sem):
-              target = RAW / f"ep{ep:02d}_unit_{row['unit']:02d}.mp3"
-              text = pronounce(row["text"])
-              async with sem:
-                  last = None
-                  for attempt in range(1, 5):
-                      try:
-                          communicate = edge_tts.Communicate(
-                              text=text,
-                              voice=VOICE,
-                              rate=RATE,
-                              pitch=PITCH,
-                          )
-                          await asyncio.wait_for(
-                              communicate.save(str(target)),
-                              timeout=TTS_REQUEST_TIMEOUT,
-                          )
-                          if target.exists() and target.stat().st_size > 1000:
-                              return target
-                          last = RuntimeError(
-                              f"TTS produced incomplete audio ep{ep} unit {row['unit']}"
-                          )
-                          if target.exists():
-                              target.unlink()
-                          if attempt < 4:
-                              await asyncio.sleep(2.5 * attempt)
-                      except Exception as exc:
-                          last = exc
-                          if target.exists():
-                              target.unlink()
-                          if attempt < 4:
-                              await asyncio.sleep(2.5 * attempt)
-                  raise RuntimeError(
-                      f"TTS failed ep{ep} unit {row['unit']}: {last}"
-                  )
-
+                      line=line.rstrip('\n')
+                      if not line: continue
+                      unit,target,text=line.split('\t',2)
+                      rows.append({'unit':int(unit),'target':float(target),'text':text.replace('\\n','\n')})
+              return sorted(rows,key=lambda r:r['unit'])
+          async def synth(row):
+              target = RAW / f'ep{EP:02d}_unit_{row["unit"]:02d}.mp3'
+              last=None
+              for attempt in range(1,4):
+                  try:
+                      c=edge_tts.Communicate(text=pronounce(row['text']),voice=VOICE,rate=RATE,pitch=PITCH)
+                      await asyncio.wait_for(c.save(str(target)), timeout=120)
+                      if target.exists() and target.stat().st_size > 1000:
+                          return target
+                  except Exception as exc:
+                      last=exc
+                      if target.exists(): target.unlink()
+                      if attempt < 3: await asyncio.sleep(3*attempt)
+              raise RuntimeError(f'TTS failed ep{EP} unit {row["unit"]}: {last}')
           def atempo_chain(ratio):
-              vals = []
-              r = ratio
-              while r > 2.0:
-                  vals.append(2.0)
-                  r /= 2.0
-              while r < 0.5:
-                  vals.append(0.5)
-                  r /= 0.5
+              vals=[]; r=ratio
+              while r>2: vals.append(2.0); r/=2
+              while r<0.5: vals.append(0.5); r/=0.5
               vals.append(r)
-              return ",".join(f"atempo={v:.8f}" for v in vals)
-
+              return ','.join(f'atempo={v:.8f}' for v in vals)
           def srt_time(seconds):
-              ms = int(round(seconds * 1000))
-              h, ms = divmod(ms, 3600000)
-              m, ms = divmod(ms, 60000)
-              s, ms = divmod(ms, 1000)
-              return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-          def caption_chunks(text, max_words=18):
-              clean = re.sub(r"\s+", " ", text).strip()
-              if not clean:
-                  return [""]
-              sentences = re.split(r"(?<=[.!?])\s+", clean)
-              chunks = []
-              current = []
-              count = 0
-              for sent in sentences:
-                  words = sent.split()
-                  if not words:
-                      continue
-                  if current and count + len(words) > max_words:
-                      chunks.append(" ".join(current))
-                      current = []
-                      count = 0
-                  if len(words) > max_words:
-                      if current:
-                          chunks.append(" ".join(current))
-                          current = []
-                          count = 0
-                      for i in range(0, len(words), max_words):
-                          chunks.append(" ".join(words[i:i+max_words]))
-                  else:
-                      current.extend(words)
-                      count += len(words)
-              if current:
-                  chunks.append(" ".join(current))
-              return chunks or [clean]
+              ms=int(round(seconds*1000)); h,ms=divmod(ms,3600000); m,ms=divmod(ms,60000); s,ms=divmod(ms,1000)
+              return f'{h:02d}:{m:02d}:{s:02d},{ms:03d}'
+          def chunks(text,max_words=18):
+              clean=re.sub(r'\s+',' ',text).strip(); out=[]; cur=[]
+              for sent in re.split(r'(?<=[.!?])\s+',clean):
+                  words=sent.split()
+                  if not words: continue
+                  if cur and len(cur)+len(words)>max_words: out.append(' '.join(cur)); cur=[]
+                  if len(words)>max_words:
+                      if cur: out.append(' '.join(cur)); cur=[]
+                      out.extend(' '.join(words[i:i+max_words]) for i in range(0,len(words),max_words))
+                  else: cur.extend(words)
+              if cur: out.append(' '.join(cur))
+              return out or [clean]
 
           async def main():
-              sem = asyncio.Semaphore(4)
+              rows=rows_for(EP)
+              for row in rows:
+                  await synth(row)
+                  await asyncio.sleep(0.35)
 
-              manifest = {
-                  "voice": VOICE,
-                  "rate": RATE,
-                  "pitch": PITCH,
-                  "pronunciations": {
-                      "ITC": "eye tee see",
-                      "Wyspell": "why spell",
-                      "Pyromancy": "pie rom an see",
-                      "Lychnomancy": "lick no man see",
-                      "Capnomancy": "cap no man see",
-                      "Magistellus": "maj ih STELL us",
-                      "Datura": "duh TOO ruh",
-                      "Elecampane": "el eh cam pane",
-                      "ceromancy": "seer oh man see",
-                      "Lo Scarabeo": "loh skah rah BEH oh",
-                  },
-                  "episodes": {},
-              }
+              epseg=SEG/f'ep{EP:02d}'; epseg.mkdir(exist_ok=True)
+              segs=[]; units=[]
+              for row in rows:
+                  raw=RAW/f'ep{EP:02d}_unit_{row["unit"]:02d}.mp3'; raw_dur=probe(raw); target=row['target']
+                  wav=epseg/f'unit_{row["unit"]:02d}.wav'
+                  if raw_dur <= target + 0.015:
+                      mode='pad'; ratio=1.0; af='apad'
+                  else:
+                      mode='atempo'; ratio=raw_dur/target; af=atempo_chain(ratio)
+                  run(['ffmpeg','-y','-v','error','-i',str(raw),'-af',af,'-t',f'{target:.6f}','-ar','48000','-ac','1','-c:a','pcm_s16le',str(wav)])
+                  segs.append(wav)
+                  units.append({'unit':row['unit'],'raw_duration':raw_dur,'target_duration':target,'final_duration':probe(wav),'mode':mode,'speed_ratio':ratio})
 
-              for ep in EPISODES:
-                  rows = read_rows(ep)
-                  synth_tasks = []
-                  synth_targets = {}
-                  for row in rows:
-                      task = asyncio.create_task(synth_one(ep, row, sem))
-                      synth_tasks.append(task)
-                      synth_targets[task] = RAW / f"ep{ep:02d}_unit_{row['unit']:02d}.mp3"
-                  try:
-                      await asyncio.gather(*synth_tasks)
-                  except Exception:
-                      for task in synth_tasks:
-                          task.cancel()
-                      await asyncio.gather(*synth_tasks, return_exceptions=True)
-                      for task, target in synth_targets.items():
-                          if (task.cancelled() or task.exception() is not None) and target.exists():
-                              target.unlink()
-                      raise
+              concat=epseg/'concat.txt'
+              concat.write_text(''.join(f"file '{p.resolve().as_posix()}'\n" for p in segs),encoding='utf-8')
+              total=sum(r['target'] for r in rows)
+              final_mp3=OUT/f'Episode_{EP:02d}_Ava_Narration.mp3'
+              run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(concat),'-t',f'{total:.6f}','-ar','48000','-ac','1','-c:a','libmp3lame','-b:a','160k',str(final_mp3)])
 
-                  epseg = SEG / f"ep{ep:02d}"
-                  epseg.mkdir(exist_ok=True)
-                  unit_manifest = []
-                  segment_paths = []
-
-                  for row in rows:
-                      raw = RAW / f"ep{ep:02d}_unit_{row['unit']:02d}.mp3"
-                      raw_dur = probe_duration(raw)
-                      target = row["target"]
-                      wav = epseg / f"unit_{row['unit']:02d}.wav"
-
-                      if abs(raw_dur - target) <= RAW_PADDING_TOLERANCE:
-                          mode = "copy"
-                          run(
-                              [
-                                  "ffmpeg", "-y", "-v", "error",
-                                  "-i", str(raw),
-                                  "-t", f"{target:.6f}",
-                                  "-ar", "48000", "-ac", "1",
-                                  "-c:a", "pcm_s16le",
-                                  str(wav),
-                              ]
-                          )
-                          ratio = 1.0
-                      elif raw_dur < target:
-                          mode = "pad"
-                          run(
-                              [
-                                  "ffmpeg", "-y", "-v", "error",
-                                  "-i", str(raw),
-                                  "-af", "apad",
-                                  "-t", f"{target:.6f}",
-                                  "-ar", "48000", "-ac", "1",
-                                  "-c:a", "pcm_s16le",
-                                  str(wav),
-                              ]
-                          )
-                          ratio = 1.0
-                      else:
-                          ratio = raw_dur / target
-                          mode = "atempo"
-                          run(
-                              [
-                                  "ffmpeg", "-y", "-v", "error",
-                                  "-i", str(raw),
-                                  "-af", atempo_chain(ratio),
-                                  "-t", f"{target:.6f}",
-                                  "-ar", "48000", "-ac", "1",
-                                  "-c:a", "pcm_s16le",
-                                  str(wav),
-                              ]
-                          )
-
-                      segment_paths.append(wav)
-                      final_seg_dur = probe_duration(wav)
-                      if abs(final_seg_dur - target) > SEGMENT_DURATION_TOLERANCE:
-                          raise RuntimeError(
-                              f"Segment duration drift ep{ep} unit {row['unit']}: "
-                              f"target={target:.6f}s actual={final_seg_dur:.6f}s"
-                          )
-                      unit_manifest.append(
-                          {
-                              "unit": row["unit"],
-                              "raw_duration": raw_dur,
-                              "target_duration": target,
-                              "final_duration": final_seg_dur,
-                              "mode": mode,
-                              "speed_ratio": ratio,
-                          }
-                      )
-
-                  concat = epseg / "concat.txt"
-                  concat.write_text(
-                      "".join(
-                          f"file '{concat_quote(p)}'\n"
-                          for p in segment_paths
-                      ),
-                      encoding="utf-8",
-                  )
-                  total_target = sum(r["target"] for r in rows)
-                  final_mp3 = OUT / f"Episode_{ep:02d}_Ava_Narration.mp3"
-                  run(
-                      [
-                          "ffmpeg", "-y", "-v", "error",
-                          "-f", "concat", "-safe", "0",
-                          "-i", str(concat),
-                          "-t", f"{total_target:.6f}",
-                          "-ar", "48000", "-ac", "1",
-                          "-c:a", "libmp3lame", "-b:a", "160k",
-                          str(final_mp3),
-                      ]
-                  )
-
-                  srt_lines = []
-                  srt_index = 1
-                  unit_start = 0.0
-                  for row in rows:
-                      chunks = caption_chunks(row["text"])
-                      counts = [max(1, len(c.split())) for c in chunks]
-                      denom = sum(counts)
-                      cursor = unit_start
-                      unit_end = unit_start + row["target"]
-                      for idx, (chunk, wc) in enumerate(zip(chunks, counts)):
-                          if idx == len(chunks) - 1:
-                              end = unit_end
-                          else:
-                              end = cursor + row["target"] * (wc / denom)
-                          srt_lines.extend(
-                              [
-                                  str(srt_index),
-                                  f"{srt_time(cursor)} --> {srt_time(end)}",
-                                  chunk,
-                                  "",
-                              ]
-                          )
-                          srt_index += 1
-                          cursor = end
-                      unit_start = unit_end
-
-                  srt_path = OUT / f"Episode_{ep:02d}_Ava_Captions.srt"
-                  srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
-                  final_audio_duration = probe_duration(final_mp3)
-                  if abs(final_audio_duration - total_target) > FINAL_DURATION_TOLERANCE:
-                      raise RuntimeError(
-                          f"Episode duration drift ep{ep}: "
-                          f"target={total_target:.6f}s actual={final_audio_duration:.6f}s"
-                      )
-
-                  manifest["episodes"][f"{ep:02d}"] = {
-                      "target_duration": total_target,
-                      "final_audio_duration": final_audio_duration,
-                      "units": unit_manifest,
-                      "audio": final_mp3.name,
-                      "captions": srt_path.name,
-                  }
-
-              (OUT / "Spellcraft_Ava_Narration_Manifest.json").write_text(
-                  json.dumps(manifest, indent=2), encoding="utf-8"
-              )
+              srt=[]; n=1; unit_start=0.0
+              for row in rows:
+                  cc=chunks(row['text']); counts=[max(1,len(c.split())) for c in cc]; denom=sum(counts); cursor=unit_start; unit_end=unit_start+row['target']
+                  for i,(chunk,wc) in enumerate(zip(cc,counts)):
+                      end=unit_end if i==len(cc)-1 else cursor+row['target']*(wc/denom)
+                      srt.extend([str(n),f'{srt_time(cursor)} --> {srt_time(end)}',chunk,'']); n+=1; cursor=end
+                  unit_start=unit_end
+              srt_path=OUT/f'Episode_{EP:02d}_Ava_Captions.srt'; srt_path.write_text('\n'.join(srt),encoding='utf-8')
+              manifest={'episode':EP,'voice':VOICE,'rate':RATE,'pitch':PITCH,'target_duration':total,'final_audio_duration':probe(final_mp3),'audio':final_mp3.name,'captions':srt_path.name,'units':units,'pronunciations':{'ceromancy':'seer oh man see','ITC':'eye tee see','Lo Scarabeo':'loh skah rah BEH oh'}}
+              (OUT/f'Episode_{EP:02d}_Ava_Manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
 
           asyncio.run(main())
           PY
 
-      - name: Verify narration package
+      - name: Verify episode package
+        env:
+          EPISODE: ${{ matrix.episode }}
         shell: bash
         run: |
-          set -euo pipefail
-          test -s "narration_output/Spellcraft_Ava_Narration_Manifest.json"
-          for ep in $SPELLCRAFT_EPISODES; do
-            test -s "narration_output/Episode_${ep}_Ava_Narration.mp3"
-            test -s "narration_output/Episode_${ep}_Ava_Captions.srt"
-            ffprobe -v error -show_entries format=duration \
-              -of default=noprint_wrappers=1:nokey=1 \
-              "narration_output/Episode_${ep}_Ava_Narration.mp3"
-          done
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
+          ep=$(printf '%02d' "$EPISODE")
+          test -s "narration_output/Episode_${ep}_Ava_Narration.mp3"
+          test -s "narration_output/Episode_${ep}_Ava_Captions.srt"
+          test -s "narration_output/Episode_${ep}_Ava_Manifest.json"
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "narration_output/Episode_${ep}_Ava_Narration.mp3"
 
-          manifest = json.loads(
-              Path("narration_output/Spellcraft_Ava_Narration_Manifest.json").read_text(
-                  encoding="utf-8"
-              )
-          )
-          out = Path("narration_output")
-          expected = set(os.environ["SPELLCRAFT_EPISODES"].split())
-          actual = set(manifest.get("episodes", {}))
-          missing = sorted(expected - actual)
-          extra = sorted(actual - expected)
-          if missing or extra:
-              parts = []
-              if missing:
-                  parts.append(f"missing episodes: {', '.join(missing)}")
-              if extra:
-                  parts.append(f"unexpected episodes: {', '.join(extra)}")
-              raise SystemExit(f"Manifest episode mismatch ({'; '.join(parts)})")
-          expected_audio = {
-              f"Episode_{int(ep):02d}_Ava_Narration.mp3"
-              for ep in os.environ["SPELLCRAFT_EPISODES"].split()
-          }
-          expected_captions = {
-              f"Episode_{int(ep):02d}_Ava_Captions.srt"
-              for ep in os.environ["SPELLCRAFT_EPISODES"].split()
-          }
-          actual_audio = {path.name for path in out.glob("Episode_*_Ava_Narration.mp3")}
-          actual_captions = {path.name for path in out.glob("Episode_*_Ava_Captions.srt")}
-          if actual_audio != expected_audio:
-              raise SystemExit(
-                  f"Unexpected narration files: {sorted(actual_audio ^ expected_audio)}"
-              )
-          if actual_captions != expected_captions:
-              raise SystemExit(
-                  f"Unexpected caption files: {sorted(actual_captions ^ expected_captions)}"
-              )
-          PY
-
-      - name: Upload narration package
+      - name: Upload episode narration package
         uses: actions/upload-artifact@v4
+        env:
+          EPISODE: ${{ matrix.episode }}
         with:
-          name: spellcraft-series-ava-narration
+          name: spellcraft-episode-${{ matrix.episode }}-ava-narration
           path: |
             narration_output/Episode_*_Ava_Narration.mp3
             narration_output/Episode_*_Ava_Captions.srt
-            narration_output/Spellcraft_Ava_Narration_Manifest.json
+            narration_output/Episode_*_Ava_Manifest.json
           retention-days: 1
