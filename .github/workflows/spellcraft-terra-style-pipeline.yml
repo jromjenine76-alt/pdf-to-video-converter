@@ -89,8 +89,9 @@ jobs:
 
       - name: Verify chapter MP4
         run: |
-          test -s chapter_output/chapter_$(printf '%03d' ${{ matrix.chapter }}).mp4
-          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json chapter_output/chapter_$(printf '%03d' ${{ matrix.chapter }}).mp4
+          chapter_mp4="chapter_output/chapter_$(printf '%03d' '${{ matrix.chapter }}').mp4"
+          test -s "$chapter_mp4"
+          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json "$chapter_mp4"
 
       - name: Upload completed chapter checkpoint
         uses: actions/upload-artifact@v4
