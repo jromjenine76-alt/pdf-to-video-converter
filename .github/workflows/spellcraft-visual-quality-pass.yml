@@ -50,9 +50,10 @@ jobs:
       - name: Build catalog
         run: python chapter_pipeline/build_catalog.py
 
-      - name: Compile visual-quality code before spending render time
+      - name: Compile hardened converter before spending render time
         run: |
           python -m py_compile \
+            chapter_pipeline/asset_ingest.py \
             chapter_pipeline/render_chapter.py \
             chapter_pipeline/render_chapter_visual_quality.py \
             chapter_pipeline/cinematic_scene_renderer_v2.py \
@@ -101,6 +102,7 @@ jobs:
           assert (int(v.get('width',0)), int(v.get('height',0))) == (1920,1080)
           assert a.get('codec_name') == 'aac'
           print('user source visuals used:', matched)
+          print('rejected source visuals:', meta.get('rejected_source_assets', []))
           print('dynamic object-motion scenes:', meta.get('dynamic_object_motion_scenes'))
           print('visual quality gate passed')
           PY
