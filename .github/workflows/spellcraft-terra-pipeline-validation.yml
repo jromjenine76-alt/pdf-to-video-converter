@@ -33,7 +33,7 @@ jobs:
           tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
           sudo install /tmp/actionlint /usr/local/bin/actionlint
           python -m pip install --upgrade pip >/dev/null
-          pip install -r requirements.txt edge-tts kokoro-onnx soundfile >/dev/null
+          pip install -r requirements.txt kokoro-onnx soundfile >/dev/null
 
       - name: Lint GitHub workflows
         run: |
@@ -59,28 +59,37 @@ jobs:
           python chapter_pipeline/kokoro_tts.py --help
           python spellcraft_animated_renderer.py --help
 
-      - name: Verify media and speech tools
+      - name: Verify media and local speech tools
         run: |
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
           espeak-ng --version | head -n 1
           python - <<'PY'
-          import edge_tts
           import soundfile
           import kokoro_onnx
-          from openai import OpenAI
-          print('edge_tts import OK')
           print('kokoro_onnx import OK')
           print('soundfile import OK')
-          print('openai import OK')
           PY
 
-      - name: Enforce final voice-lock policy in source
+      - name: Enforce Sarah final voice lock in code and config
         run: |
           python - <<'PY'
+          import json
           from pathlib import Path
+
           policy = Path('chapter_pipeline/VOICE_LOCK.md').read_text(encoding='utf-8')
-          assert 'must never regenerate or overwrite' in policy
-          assert 'silently falls back to Edge/Ava is not a final narration build' in policy
-          print('voice lock policy present')
+          cfg = json.loads(Path('chapter_pipeline/VOICE_CONFIG.json').read_text(encoding='utf-8'))
+          renderer = Path('chapter_pipeline/render_chapter.py').read_text(encoding='utf-8')
+
+          assert cfg['provider'] == 'kokoro'
+          assert cfg['voice'] == 'af_sarah'
+          assert cfg['approved'] is True
+          assert cfg['locked'] is True
+          assert 'af_sarah' in policy
+          assert 'Do not substitute Marin, Edge/Ava, or any other voice' in policy
+          assert "cfg.get('voice') != 'af_sarah'" in renderer
+          assert 'edge_tts' not in renderer
+          assert 'OPENAI_API_KEY' not in renderer
+          assert 'from openai import' not in renderer
+          print('Sarah voice lock enforced in final renderer')
           PY
