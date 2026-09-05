@@ -1,0 +1,183 @@
+name: Build Spellcraft Animated Walkthrough V2
+
+on:
+  workflow_dispatch:
+    inputs:
+      episode:
+        description: Episode number 1-8, or all
+        required: true
+        default: all
+      start_unit:
+        description: First narration unit to render
+        required: false
+        default: '1'
+      end_unit:
+        description: Last narration unit to render
+        required: false
+        default: '999'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  render:
+    strategy:
+      fail-fast: false
+      matrix:
+        episode: [1,2,3,4,5,6,7,8]
+    if: ${{ inputs.episode == 'all' || inputs.episode == format('{0}', matrix.episode) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout animated renderer branch
+        uses: actions/checkout@v4
+        with:
+          ref: spellcraft-animated-walkthrough-v2
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-freefont-ttf
+          python -m pip install --upgrade pip >/dev/null
+          pip install -r requirements.txt >/dev/null
+
+      - name: Prepare narration and manifest
+        shell: bash
+        env:
+          EP: ${{ matrix.episode }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/narration/ep${EP} build/manifests output
+
+          # Preferred source: previously generated narration packages saved in the repo/artifacts.
+          # The script below also accepts the corrected unit data already tracked in spellcraft/.
+          python - <<'PY'
+          import gzip, json, os, re
+          from pathlib import Path
+
+          ep = int(os.environ['EP'])
+          out = Path('build/manifests') / f'ep{ep}.json'
+          rows = []
+
+          # First choice: narration TSVs already used by the Marin workflow.
+          tsv = Path('spellcraft_narration') / f'ep{ep}.tsv.gz'
+          if tsv.exists():
+              with gzip.open(tsv, 'rt', encoding='utf-8') as fh:
+                  for line in fh:
+                      if not line.strip():
+                          continue
+                      unit, target, text = line.rstrip('\n').split('\t', 2)
+                      rows.append({
+                          'episode': ep,
+                          'unit': int(unit),
+                          'text': text.replace('\\n','\n'),
+                          'heading': f'Episode {ep}',
+                          'old_target_duration': float(target),
+                      })
+
+          # Fallback: corrected_units.json, if it contains the current episode.
+          if not rows:
+              p = Path('spellcraft/corrected_units.json')
+              if p.exists():
+                  data = json.loads(p.read_text(encoding='utf-8'))
+                  source = data.get('units', data) if isinstance(data, dict) else data
+                  for item in source:
+                      iep = int(item.get('episode', 0) or 0)
+                      if iep != ep:
+                          continue
+                      rows.append(item)
+
+          if not rows:
+              raise SystemExit(f'No narration unit data found for episode {ep}')
+
+          out.write_text(json.dumps({'episode':ep,'units':rows},indent=2),encoding='utf-8')
+          print(f'Wrote {len(rows)} units to {out}')
+          PY
+
+      - name: Generate Marin narration when repository key is active
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EP: ${{ matrix.episode }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "OPENAI_API_KEY is not configured; this render needs an existing narration package."
+            exit 2
+          fi
+          pip install "openai>=1.40.0" >/dev/null
+          python - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          from openai import OpenAI
+
+          ep = int(os.environ['EP'])
+          manifest = json.loads((Path('build/manifests') / f'ep{ep}.json').read_text(encoding='utf-8'))
+          out = Path('build/narration') / f'ep{ep}'
+          out.mkdir(parents=True, exist_ok=True)
+          client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+          style = (
+              'Warm, natural, human-like feminine educational narrator. Smooth connected delivery, calm storytelling pace, '
+              'clear pronunciation, expressive but restrained emphasis, no robotic cadence, no choppy pauses, and no announcer tone.'
+          )
+          replacements = [
+              (r'\bI[\s-]*T[\s-]*C\b','eye tee see'),
+              (r'\bWyspell\b','Why-spell'),
+              (r'\bLo\s+Scarabeo\b','loh skah rah BEH oh'),
+              (r'\b[Cc]eromancy\b','seer oh man see'),
+              (r'\b[Pp]yromancy\b','pie roh man see'),
+              (r'\b[Ll]ychnomancy\b','lick noh man see'),
+              (r'\b[Cc]apnomancy\b','cap noh man see'),
+              (r'\b[Mm]agistellus\b','mag iss TELL us'),
+          ]
+          for row in manifest['units']:
+              uid = int(row.get('unit', row.get('id')))
+              text = str(row.get('text', row.get('narration','')))
+              for pat,repl in replacements:
+                  text = re.sub(pat,repl,text)
+              wav = out / f'unit_{uid:02d}.wav'
+              if wav.exists() and wav.stat().st_size > 1000:
+                  continue
+              with client.audio.speech.with_streaming_response.create(
+                  model='gpt-4o-mini-tts', voice='marin', input=text,
+                  instructions=style, response_format='wav'
+              ) as response:
+                  response.stream_to_file(wav)
+              if wav.stat().st_size < 1000:
+                  raise SystemExit(f'Bad narration output: {wav}')
+          PY
+
+      - name: Render animated episode
+        shell: bash
+        env:
+          EP: ${{ matrix.episode }}
+          START: ${{ inputs.start_unit }}
+          END: ${{ inputs.end_unit }}
+        run: |
+          python spellcraft_animated_renderer.py \
+            --manifest "build/manifests/ep${EP}.json" \
+            --audio-dir "build/narration/ep${EP}" \
+            --episode "$EP" \
+            --start-unit "$START" \
+            --end-unit "$END" \
+            --output "output/Spellcraft_Episode_${EP}_ANIMATED_V2.mp4"
+
+      - name: Verify episode output
+        shell: bash
+        env:
+          EP: ${{ matrix.episode }}
+        run: |
+          test -s "output/Spellcraft_Episode_${EP}_ANIMATED_V2.mp4"
+          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration \
+            -of json "output/Spellcraft_Episode_${EP}_ANIMATED_V2.mp4"
+
+      - name: Upload animated episode
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-episode-${{ matrix.episode }}-animated-v2
+          path: output/Spellcraft_Episode_${{ matrix.episode }}_ANIMATED_V2.mp4
+          retention-days: 7
