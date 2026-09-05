@@ -27,8 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        episode: [1,2,3,4,5,6,7,8]
-    if: ${{ inputs.episode == 'all' || inputs.episode == format('{0}', matrix.episode) }}
+        episode: ${{ fromJSON(inputs.episode == 'all' && '[1,2,3,4,5,6,7,8]' || format('[{0}]', inputs.episode)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 355
 
@@ -51,7 +50,7 @@ jobs:
           EP: ${{ matrix.episode }}
         run: |
           set -euo pipefail
-          mkdir -p build/narration/ep${EP} build/manifests output
+          mkdir -p "build/narration/ep${EP}" build/manifests output
 
           # Preferred source: previously generated narration packages saved in the repo/artifacts.
           # The script below also accepts the corrected unit data already tracked in spellcraft/.
