@@ -106,6 +106,13 @@ jobs:
                           await communicate.save(str(target))
                           if target.exists() and target.stat().st_size > 1000:
                               return target
+                          last = RuntimeError(
+                              f"TTS produced incomplete audio ep{ep} unit {row['unit']}"
+                          )
+                          if target.exists():
+                              target.unlink()
+                          if attempt < 4:
+                              await asyncio.sleep(2.5 * attempt)
                       except Exception as exc:
                           last = exc
                           if target.exists():
@@ -172,8 +179,16 @@ jobs:
               synth_tasks = []
               for ep, rows in all_rows.items():
                   for row in rows:
-                      synth_tasks.append(synth_one(ep, row, sem))
-              await asyncio.gather(*synth_tasks)
+                      synth_tasks.append(asyncio.create_task(synth_one(ep, row, sem)))
+              try:
+                  await asyncio.gather(*synth_tasks)
+              except Exception:
+                  for task in synth_tasks:
+                      task.cancel()
+                  await asyncio.gather(*synth_tasks, return_exceptions=True)
+                  for path in RAW.glob("*.mp3"):
+                      path.unlink()
+                  raise
 
               manifest = {
                   "voice": VOICE,
