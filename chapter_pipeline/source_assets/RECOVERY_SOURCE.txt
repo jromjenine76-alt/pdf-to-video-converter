@@ -1,0 +1,1 @@
+Recovery source assets rebuilt from the user-provided 23-page spell book and kit images PDF. Individual JPG payloads replace the corrupt ZIP dependency.
