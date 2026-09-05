@@ -19,5 +19,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
       - name: Lint workflows
         uses: rhysd/actionlint@v1.7.12
