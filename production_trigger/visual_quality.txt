@@ -4,3 +4,4 @@ Keep Kokoro af_sarah locked.
 Full-screen cinematic source composition, recurring object motion, no text-wall slideshow treatment.
 Rerun after Base64 padding and ZIP integrity fix: 2026-09-05 06:57 America/New_York.
 Rerun after validated recovery pack replacement: 2026-09-05 07:30 America/New_York.
+Rerun after direct per-image Base64 recovery decode fix: 2026-09-05 07:43 America/New_York.
