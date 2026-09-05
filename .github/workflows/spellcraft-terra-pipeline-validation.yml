@@ -1,0 +1,76 @@
+name: Spellcraft Terra Pipeline Validation
+
+on:
+  push:
+    branches:
+      - spellcraft-terra-style-pipeline-v1
+    paths:
+      - '.github/workflows/spellcraft-terra-style-pipeline.yml'
+      - '.github/workflows/spellcraft-terra-pipeline-validation.yml'
+      - 'chapter_pipeline/**'
+      - 'spellcraft_animated_renderer.py'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: spellcraft-terra-style-pipeline-v1
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg shellcheck
+          curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o /tmp/actionlint.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tar.gz' | sha256sum --check
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          sudo install /tmp/actionlint /usr/local/bin/actionlint
+          python -m pip install --upgrade pip >/dev/null
+          pip install -r requirements.txt edge-tts >/dev/null
+
+      - name: Lint GitHub workflows
+        run: |
+          actionlint -color .github/workflows/spellcraft-terra-style-pipeline.yml
+          actionlint -color .github/workflows/spellcraft-terra-pipeline-validation.yml
+
+      - name: Compile pipeline Python
+        run: |
+          python -m py_compile chapter_pipeline/build_catalog.py
+          python -m py_compile chapter_pipeline/build_preview.py
+          python -m py_compile chapter_pipeline/render_chapter.py
+          python -m py_compile spellcraft_animated_renderer.py
+
+      - name: Smoke-test command entry points
+        run: |
+          python chapter_pipeline/build_catalog.py
+          python chapter_pipeline/build_preview.py --help
+          python chapter_pipeline/render_chapter.py --help
+          python spellcraft_animated_renderer.py --help
+
+      - name: Verify media tools
+        run: |
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+          python - <<'PY'
+          import edge_tts
+          from openai import OpenAI
+          print('edge_tts import OK')
+          print('openai import OK')
+          PY
+
+      - name: Enforce final voice-lock policy in source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          policy = Path('chapter_pipeline/VOICE_LOCK.md').read_text(encoding='utf-8')
+          assert 'must never regenerate or overwrite' in policy
+          assert 'silently falls back to Edge/Ava is not a final narration build' in policy
+          print('voice lock policy present')
+          PY
