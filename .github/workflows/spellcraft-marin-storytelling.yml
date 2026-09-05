@@ -78,7 +78,7 @@ jobs:
                   return text
               return None
 
-          def mark_skipped(message):
+          def mark_skipped():
               STATUS_FILE.write_text(
                   json.dumps({"skip_reason": "billing_not_active"}),
                   encoding="utf-8",
@@ -181,7 +181,7 @@ jobs:
                       if message:
                           if wav.exists():
                               wav.unlink()
-                          mark_skipped(message)
+                          mark_skipped()
                       if wav.exists():
                           wav.unlink()
                       if attempt == 3:
@@ -191,7 +191,7 @@ jobs:
                       if message:
                           if wav.exists():
                               wav.unlink()
-                          mark_skipped(message)
+                          mark_skipped()
                       if wav.exists():
                           wav.unlink()
                       if attempt == 3:
