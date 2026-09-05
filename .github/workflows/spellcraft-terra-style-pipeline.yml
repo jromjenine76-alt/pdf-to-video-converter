@@ -1,0 +1,128 @@
+name: Spellcraft Chapterized Preview Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      chapter_start:
+        description: First chapter adapter ID to render
+        required: false
+        default: '1'
+      chapter_end:
+        description: Last chapter adapter ID to render
+        required: false
+        default: '8'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  render-chapter:
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        chapter: [1,2,3,4,5,6,7,8]
+    if: ${{ matrix.chapter >= fromJSON(inputs.chapter_start) && matrix.chapter <= fromJSON(inputs.chapter_end) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spellcraft-terra-style-pipeline-v1
+
+      - name: Install media and speech tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-freefont-ttf
+          python -m pip install --upgrade pip >/dev/null
+          pip install -r requirements.txt edge-tts >/dev/null
+
+      - name: Build catalog
+        run: python chapter_pipeline/build_catalog.py
+
+      - name: Restore chapter checkpoints
+        uses: actions/cache@v4
+        with:
+          path: .chapter_cache
+          key: spellcraft-c${{ matrix.chapter }}-${{ hashFiles('spellcraft_narration/**', 'spellcraft_animated_renderer.py', 'chapter_pipeline/render_chapter.py') }}
+          restore-keys: |
+            spellcraft-c${{ matrix.chapter }}-
+
+      - name: Generate narration and illustrated video in resumable chunks
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python chapter_pipeline/render_chapter.py \
+            --chapter ${{ matrix.chapter }} \
+            --catalog chapter_pipeline/catalog.json \
+            --output-dir chapter_output \
+            --cache-dir .chapter_cache
+
+      - name: Verify chapter MP4
+        run: |
+          test -s chapter_output/chapter_$(printf '%03d' ${{ matrix.chapter }}).mp4
+          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration -of json chapter_output/chapter_$(printf '%03d' ${{ matrix.chapter }}).mp4
+
+      - name: Upload completed chapter checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-chapter-${{ matrix.chapter }}
+          path: |
+            chapter_output/chapter_*.mp4
+            chapter_output/chapter_*.json
+          retention-days: 7
+
+  assemble-preview:
+    needs: render-chapter
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: spellcraft-terra-style-pipeline-v1
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Download finished chapters
+        uses: actions/download-artifact@v4
+        with:
+          pattern: spellcraft-chapter-*
+          path: chapter_output
+          merge-multiple: true
+
+      - name: Build review player
+        run: python chapter_pipeline/build_preview.py --chapters-dir chapter_output --output-dir preview_app
+
+      - name: Assemble current master from completed chapters
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          files=sorted(Path('chapter_output').glob('chapter_*.mp4'))
+          if not files:
+              raise SystemExit('No chapter MP4s available')
+          listing=Path('chapter_output/master.concat.txt')
+          listing.write_text(''.join(f"file '{p.resolve().as_posix()}'\n" for p in files),encoding='utf-8')
+          subprocess.run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(listing),'-c','copy','-movflags','+faststart','chapter_output/Spellcraft_Current_Master.mp4'],check=True)
+          print(f'assembled {len(files)} chapters')
+          PY
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 chapter_output/Spellcraft_Current_Master.mp4
+
+      - name: Upload preview app
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-preview-app
+          path: preview_app
+          retention-days: 7
+
+      - name: Upload current master
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-current-master
+          path: chapter_output/Spellcraft_Current_Master.mp4
+          retention-days: 7
