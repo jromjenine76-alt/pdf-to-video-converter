@@ -47,7 +47,7 @@ jobs:
           if python - <<'PY'
           import gzip, json, os, re, subprocess
           from pathlib import Path
-          from openai import OpenAI, RateLimitError
+          from openai import APIStatusError, OpenAI
 
           EP = int(os.environ["EPISODE"])
           MODEL = "gpt-4o-mini-tts"
@@ -176,7 +176,7 @@ jobs:
                           response.stream_to_file(wav)
                       if wav.exists() and wav.stat().st_size > 1000:
                           break
-                  except RateLimitError as error:
+                  except APIStatusError as error:
                       message = billing_inactive_message(error)
                       if message:
                           if wav.exists():
