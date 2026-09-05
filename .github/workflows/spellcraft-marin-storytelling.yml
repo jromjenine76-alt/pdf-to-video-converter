@@ -1,0 +1,239 @@
+name: Build Spellcraft Marin Storytelling Narration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/spellcraft-marin-storytelling.yml'
+      - 'spellcraft_narration/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  narrate:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        episode: [2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      EPISODE: ${{ matrix.episode }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install --upgrade pip >/dev/null
+          pip install "openai>=1.40.0" >/dev/null
+
+      - name: Generate Marin narration
+        shell: bash
+        run: |
+          test -n "$OPENAI_API_KEY" || (echo "OPENAI_API_KEY missing" && exit 2)
+          python - <<'PY'
+          import gzip, json, os, re, subprocess
+          from pathlib import Path
+          from openai import OpenAI
+
+          EP = int(os.environ["EPISODE"])
+          MODEL = "gpt-4o-mini-tts"
+          VOICE = "marin"
+          DATA = Path("spellcraft_narration")
+          OUT = Path("marin_storytelling_output")
+          RAW = OUT / "raw" / f"ep{EP:02d}"
+          OUT.mkdir(exist_ok=True)
+          RAW.mkdir(parents=True, exist_ok=True)
+
+          client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+          STYLE = (
+              "Speak as the same warm, natural, human-like feminine educational narrator used for the approved "
+              "Episode One. Smooth connected delivery, calm storytelling pace, clear pronunciation, expressive "
+              "but restrained emphasis, no robotic cadence, no choppy pauses, and no exaggerated announcer tone."
+          )
+
+          def run(cmd):
+              subprocess.run(cmd, check=True)
+
+          def probe(path):
+              return float(subprocess.check_output([
+                  "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                  "-of", "default=noprint_wrappers=1:nokey=1", str(path)
+              ], text=True).strip())
+
+          def pronounce(text):
+              reps = [
+                  (r"\bI[\s-]*T[\s-]*C\b", "eye tee see"),
+                  (r"\bWyspell\b", "Why-spell"),
+                  (r"\bLo\s+Scarabeo\b", "loh skah rah BEH oh"),
+                  (r"\bCeromancy\b", "seer oh man see"),
+                  (r"\bceromancy\b", "seer oh man see"),
+                  (r"\bPyromancy\b", "pie roh man see"),
+                  (r"\bpyromancy\b", "pie roh man see"),
+                  (r"\bLychnomancy\b", "lick noh man see"),
+                  (r"\blychnomancy\b", "lick noh man see"),
+                  (r"\bCapnomancy\b", "cap noh man see"),
+                  (r"\bcapnomancy\b", "cap noh man see"),
+                  (r"\bMagistellus\b", "mag iss TELL us"),
+                  (r"\bmagistellus\b", "mag iss TELL us"),
+              ]
+              for pat, repl in reps:
+                  text = re.sub(pat, repl, text)
+              return text
+
+          def rows_for(ep):
+              rows = []
+              with gzip.open(DATA / f"ep{ep}.tsv.gz", "rt", encoding="utf-8") as fh:
+                  for line in fh:
+                      line = line.rstrip("\n")
+                      if not line:
+                          continue
+                      unit, old_target, text = line.split("\t", 2)
+                      rows.append({
+                          "unit": int(unit),
+                          "old_target": float(old_target),
+                          "text": text.replace("\\n", "\n"),
+                      })
+              return sorted(rows, key=lambda r: r["unit"])
+
+          def chunks(text, max_words=18):
+              clean = re.sub(r"\s+", " ", text).strip()
+              out, cur = [], []
+              for sent in re.split(r"(?<=[.!?])\s+", clean):
+                  words = sent.split()
+                  if not words:
+                      continue
+                  if cur and len(cur) + len(words) > max_words:
+                      out.append(" ".join(cur))
+                      cur = []
+                  if len(words) > max_words:
+                      if cur:
+                          out.append(" ".join(cur))
+                          cur = []
+                      out.extend(" ".join(words[i:i+max_words]) for i in range(0, len(words), max_words))
+                  else:
+                      cur.extend(words)
+              if cur:
+                  out.append(" ".join(cur))
+              return out or [clean]
+
+          def srt_time(seconds):
+              ms = int(round(seconds * 1000))
+              h, ms = divmod(ms, 3600000)
+              m, ms = divmod(ms, 60000)
+              s, ms = divmod(ms, 1000)
+              return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+          rows = rows_for(EP)
+          units = []
+          wavs = []
+
+          for row in rows:
+              wav = RAW / f"unit_{row['unit']:02d}.wav"
+              text = pronounce(row["text"])
+              for attempt in range(1, 4):
+                  try:
+                      with client.audio.speech.with_streaming_response.create(
+                          model=MODEL,
+                          voice=VOICE,
+                          input=text,
+                          instructions=STYLE,
+                          response_format="wav",
+                      ) as response:
+                          response.stream_to_file(wav)
+                      if wav.exists() and wav.stat().st_size > 1000:
+                          break
+                  except Exception:
+                      if wav.exists():
+                          wav.unlink()
+                      if attempt == 3:
+                          raise
+              duration = probe(wav)
+              wavs.append(wav)
+              units.append({
+                  "unit": row["unit"],
+                  "duration": duration,
+                  "old_target_duration": row["old_target"],
+                  "text": row["text"],
+              })
+
+          concat = RAW / "concat.txt"
+          concat.write_text(
+              "".join(f"file '{p.resolve().as_posix()}'\n" for p in wavs),
+              encoding="utf-8",
+          )
+
+          final_wav = OUT / f"Episode_{EP:02d}_MARIN_Narration.wav"
+          run([
+              "ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+              "-i", str(concat), "-ar", "48000", "-ac", "1",
+              "-c:a", "pcm_s16le", str(final_wav)
+          ])
+
+          srt = []
+          n = 1
+          cursor = 0.0
+          for unit in units:
+              cc = chunks(unit["text"])
+              counts = [max(1, len(c.split())) for c in cc]
+              denom = sum(counts)
+              end_unit = cursor + unit["duration"]
+              for i, (chunk, wc) in enumerate(zip(cc, counts)):
+                  end = end_unit if i == len(cc) - 1 else cursor + unit["duration"] * (wc / denom)
+                  srt.extend([str(n), f"{srt_time(cursor)} --> {srt_time(end)}", chunk, ""])
+                  n += 1
+                  cursor = end
+              cursor = end_unit
+
+          srt_path = OUT / f"Episode_{EP:02d}_MARIN_Captions.srt"
+          srt_path.write_text("\n".join(srt), encoding="utf-8")
+
+          manifest = {
+              "episode": EP,
+              "model": MODEL,
+              "voice": VOICE,
+              "voice_style": STYLE,
+              "natural_timing": True,
+              "final_audio": final_wav.name,
+              "final_audio_duration": probe(final_wav),
+              "captions": srt_path.name,
+              "units": units,
+              "pronunciations": {
+                  "ceromancy": "seer oh man see",
+                  "ITC": "eye tee see",
+                  "Lo Scarabeo": "loh skah rah BEH oh",
+                  "Wyspell": "Why-spell",
+              },
+          }
+          manifest_path = OUT / f"Episode_{EP:02d}_MARIN_Manifest.json"
+          manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+          print(json.dumps({"episode": EP, "duration": manifest["final_audio_duration"], "voice": VOICE}))
+          PY
+
+      - name: Verify narration package
+        shell: bash
+        run: |
+          ep=$(printf '%02d' "$EPISODE")
+          test -s "marin_storytelling_output/Episode_${ep}_MARIN_Narration.wav"
+          test -s "marin_storytelling_output/Episode_${ep}_MARIN_Captions.srt"
+          test -s "marin_storytelling_output/Episode_${ep}_MARIN_Manifest.json"
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \
+            "marin_storytelling_output/Episode_${ep}_MARIN_Narration.wav"
+
+      - name: Upload narration package
+        uses: actions/upload-artifact@v4
+        with:
+          name: spellcraft-episode-${{ matrix.episode }}-marin-storytelling
+          path: |
+            marin_storytelling_output/Episode_*_MARIN_Narration.wav
+            marin_storytelling_output/Episode_*_MARIN_Captions.srt
+            marin_storytelling_output/Episode_*_MARIN_Manifest.json
+          retention-days: 1
