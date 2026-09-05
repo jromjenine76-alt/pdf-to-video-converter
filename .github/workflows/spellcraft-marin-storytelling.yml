@@ -263,7 +263,23 @@ jobs:
             status=$?
             if [ "$status" -eq 78 ]; then
               echo "skipped=true" >> "$GITHUB_OUTPUT"
-              echo "::warning::OpenAI billing is not active for this repository key; skipping Marin narration build."
+              warning_message="$(python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          message = "OpenAI billing is not active for this repository key."
+          status_path = Path(os.environ["GENERATION_STATUS_FILE"])
+          if status_path.exists():
+              try:
+                  payload = json.loads(status_path.read_text(encoding="utf-8"))
+              except json.JSONDecodeError:
+                  payload = {}
+              message = payload.get("message") or message
+          message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(message)
+          PY
+          )"
+              echo "::warning::${warning_message} Skipping Marin narration build."
               exit 0
             fi
             exit "$status"
