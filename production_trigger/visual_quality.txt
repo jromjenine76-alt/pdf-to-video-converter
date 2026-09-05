@@ -3,3 +3,4 @@ Use the user-extracted Wyspell and Lo Scarabeo imagery as real source visuals.
 Keep Kokoro af_sarah locked.
 Full-screen cinematic source composition, recurring object motion, no text-wall slideshow treatment.
 Rerun after Base64 padding and ZIP integrity fix: 2026-09-05 06:57 America/New_York.
+Rerun after validated recovery pack replacement: 2026-09-05 07:30 America/New_York.
