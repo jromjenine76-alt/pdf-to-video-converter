@@ -47,13 +47,14 @@ jobs:
           SEGMENT_DURATION_TOLERANCE = 0.03
           FINAL_DURATION_TOLERANCE = 0.15
           EPISODES = [int(ep) for ep in os.environ["SPELLCRAFT_EPISODES"].split()]
+          RUN_SCOPE = os.environ.get("GITHUB_RUN_ID") or f"local-{os.getpid()}"
           DATA = Path("spellcraft_narration")
           OUT = Path("narration_output")
-          RAW = OUT / "raw"
-          SEG = OUT / "segments"
+          RAW = OUT / "raw" / RUN_SCOPE
+          SEG = OUT / "segments" / RUN_SCOPE
           OUT.mkdir(exist_ok=True)
-          RAW.mkdir(exist_ok=True)
-          SEG.mkdir(exist_ok=True)
+          RAW.mkdir(parents=True, exist_ok=True)
+          SEG.mkdir(parents=True, exist_ok=True)
 
           def run(cmd):
               subprocess.run(cmd, check=True)
@@ -242,7 +243,20 @@ jobs:
                       target = row["target"]
                       wav = epseg / f"unit_{row['unit']:02d}.wav"
 
-                      if raw_dur <= target + RAW_PADDING_TOLERANCE:
+                      if abs(raw_dur - target) <= RAW_PADDING_TOLERANCE:
+                          mode = "copy"
+                          run(
+                              [
+                                  "ffmpeg", "-y", "-v", "error",
+                                  "-i", str(raw),
+                                  "-t", f"{target:.6f}",
+                                  "-ar", "48000", "-ac", "1",
+                                  "-c:a", "pcm_s16le",
+                                  str(wav),
+                              ]
+                          )
+                          ratio = 1.0
+                      elif raw_dur < target:
                           mode = "pad"
                           run(
                               [
