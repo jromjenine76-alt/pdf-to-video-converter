@@ -365,11 +365,36 @@ jobs:
                   encoding="utf-8"
               )
           )
+          out = Path("narration_output")
           expected = {str(int(ep)) for ep in os.environ["SPELLCRAFT_EPISODES"].split()}
           actual = set(manifest.get("episodes", {}))
           missing = sorted(expected - actual)
-          if missing:
-              raise SystemExit(f"Manifest missing episodes: {', '.join(missing)}")
+          extra = sorted(actual - expected)
+          if missing or extra:
+              parts = []
+              if missing:
+                  parts.append(f"missing episodes: {', '.join(missing)}")
+              if extra:
+                  parts.append(f"unexpected episodes: {', '.join(extra)}")
+              raise SystemExit(f"Manifest episode mismatch ({'; '.join(parts)})")
+          expected_audio = {
+              f"Episode_{int(ep):02d}_Ava_Narration.mp3"
+              for ep in os.environ["SPELLCRAFT_EPISODES"].split()
+          }
+          expected_captions = {
+              f"Episode_{int(ep):02d}_Ava_Captions.srt"
+              for ep in os.environ["SPELLCRAFT_EPISODES"].split()
+          }
+          actual_audio = {path.name for path in out.glob("Episode_*_Ava_Narration.mp3")}
+          actual_captions = {path.name for path in out.glob("Episode_*_Ava_Captions.srt")}
+          if actual_audio != expected_audio:
+              raise SystemExit(
+                  f"Unexpected narration files: {sorted(actual_audio ^ expected_audio)}"
+              )
+          if actual_captions != expected_captions:
+              raise SystemExit(
+                  f"Unexpected caption files: {sorted(actual_captions ^ expected_captions)}"
+              )
           PY
 
       - name: Upload narration package
