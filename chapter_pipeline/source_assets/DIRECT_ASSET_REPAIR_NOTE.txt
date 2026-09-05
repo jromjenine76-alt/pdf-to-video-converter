@@ -1,0 +1,1 @@
+The Chapter 1 gate reached scene 46 before failing on an invalid Lo Scarabeo JPEG. Next render must use fully validated Pillow-openable source images and no ZIP dependency.
