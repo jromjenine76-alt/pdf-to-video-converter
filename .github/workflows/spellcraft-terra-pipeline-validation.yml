@@ -27,24 +27,27 @@ jobs:
       - name: Install validation tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg shellcheck
+          sudo apt-get install -y -qq ffmpeg shellcheck espeak-ng
           curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o /tmp/actionlint.tar.gz
           echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tar.gz' | sha256sum --check
           tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
           sudo install /tmp/actionlint /usr/local/bin/actionlint
           python -m pip install --upgrade pip >/dev/null
-          pip install -r requirements.txt edge-tts >/dev/null
+          pip install -r requirements.txt edge-tts kokoro-onnx soundfile >/dev/null
 
       - name: Lint GitHub workflows
         run: |
           actionlint -color .github/workflows/spellcraft-terra-style-pipeline.yml
           actionlint -color .github/workflows/spellcraft-terra-pipeline-validation.yml
+          actionlint -color .github/workflows/spellcraft-kokoro-voice-test.yml
 
       - name: Compile pipeline Python
         run: |
           python -m py_compile chapter_pipeline/build_catalog.py
           python -m py_compile chapter_pipeline/build_preview.py
           python -m py_compile chapter_pipeline/render_chapter.py
+          python -m py_compile chapter_pipeline/kokoro_voice_test.py
+          python -m py_compile chapter_pipeline/kokoro_tts.py
           python -m py_compile spellcraft_animated_renderer.py
 
       - name: Smoke-test command entry points
@@ -52,16 +55,23 @@ jobs:
           python chapter_pipeline/build_catalog.py
           python chapter_pipeline/build_preview.py --help
           python chapter_pipeline/render_chapter.py --help
+          python chapter_pipeline/kokoro_voice_test.py --help
+          python chapter_pipeline/kokoro_tts.py --help
           python spellcraft_animated_renderer.py --help
 
-      - name: Verify media tools
+      - name: Verify media and speech tools
         run: |
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
+          espeak-ng --version | head -n 1
           python - <<'PY'
           import edge_tts
+          import soundfile
+          import kokoro_onnx
           from openai import OpenAI
           print('edge_tts import OK')
+          print('kokoro_onnx import OK')
+          print('soundfile import OK')
           print('openai import OK')
           PY
 
