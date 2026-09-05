@@ -62,6 +62,9 @@ jobs:
               )
               return float(out.strip())
 
+          def concat_quote(path):
+              return path.resolve().as_posix().replace("'", r"'\''")
+
           def pronounce(text):
               text = re.sub(r"\bI[\s-]*T[\s-]*C\b", "eye tee see", text, flags=re.I)
               text = re.sub(r"\bceromancy\b", "seer oh man see", text, flags=re.I)
@@ -105,6 +108,8 @@ jobs:
                               return target
                       except Exception as exc:
                           last = exc
+                          if target.exists():
+                              target.unlink()
                           if attempt < 4:
                               await asyncio.sleep(2.5 * attempt)
                   raise RuntimeError(
@@ -225,6 +230,11 @@ jobs:
 
                       segment_paths.append(wav)
                       final_seg_dur = probe_duration(wav)
+                      if abs(final_seg_dur - target) > 0.03:
+                          raise RuntimeError(
+                              f"Segment duration drift ep{ep} unit {row['unit']}: "
+                              f"target={target:.6f}s actual={final_seg_dur:.6f}s"
+                          )
                       unit_manifest.append(
                           {
                               "unit": row["unit"],
@@ -239,7 +249,7 @@ jobs:
                   concat = epseg / "concat.txt"
                   concat.write_text(
                       "".join(
-                          f"file '{p.resolve().as_posix()}'\n"
+                          f"file '{concat_quote(p)}'\n"
                           for p in segment_paths
                       ),
                       encoding="utf-8",
