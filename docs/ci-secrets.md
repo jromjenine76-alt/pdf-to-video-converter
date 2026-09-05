@@ -17,4 +17,4 @@ This repository has both optional and required secret usage in workflows.
 ## Trigger expectations
 
 - `spellcraft-key-check.yml` runs on all pushes, pull requests, and manual dispatch without restrictive path filters.
-- `workflow-validation.yml` runs on pull requests and main-branch pushes that touch `.github/workflows/**`, plus manual dispatch.
+- `workflow-validation.yml` runs on pull requests that touch `.github/workflows/**`, on main-branch pushes that touch `.github/workflows/**`, and on manual dispatch.
