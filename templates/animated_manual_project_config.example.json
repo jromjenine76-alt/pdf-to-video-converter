@@ -1,0 +1,47 @@
+{
+  "project_name": "Example Manual Walkthrough",
+  "source_pdf": "path/to/manual.pdf",
+  "expected_page_count": 0,
+  "episode_count": 1,
+  "voice": {
+    "preferred": "marin",
+    "fallback": "en-US-AvaMultilingualNeural",
+    "style": "Warm, natural, human-like feminine educational narrator. Smooth connected phrasing, calm storytelling pace, clear pronunciation, expressive but restrained emphasis, no robotic cadence, no choppy pauses, no announcer tone.",
+    "pronunciations": {}
+  },
+  "visual_direction": {
+    "mode": "illustrated_educational_motion",
+    "use_full_pdf_pages_as_primary_visuals": false,
+    "allow_clean_source_asset_extraction": true,
+    "reject_text_contaminated_crops": true,
+    "generate_original_replacements_when_needed": true,
+    "safe_margin_percent": 7,
+    "max_seconds_without_meaningful_visual_change": 8,
+    "preferred_visual_beats_per_minute": 8
+  },
+  "motion": {
+    "camera_pushes": true,
+    "camera_pans": true,
+    "parallax": true,
+    "object_entry_exit": true,
+    "diagram_drawing": true,
+    "animated_callouts": true,
+    "object_state_changes": true
+  },
+  "render": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "video_codec": "libx264",
+    "audio_sample_rate": 48000,
+    "verify_with_ffprobe": true,
+    "parallel_jobs": 4
+  },
+  "quality_gates": {
+    "require_full_source_coverage": true,
+    "forbid_clipped_text": true,
+    "forbid_overlapping_text_and_assets": true,
+    "forbid_static_slideshow_architecture": true,
+    "require_episode_artifact_verification": true
+  }
+}
