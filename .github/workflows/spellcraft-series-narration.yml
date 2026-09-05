@@ -12,6 +12,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      SPELLCRAFT_EPISODES: "02 03 04 05 06 07 08"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,6 +32,7 @@ jobs:
           import asyncio
           import gzip
           import json
+          import os
           import re
           import subprocess
           from pathlib import Path
@@ -39,6 +42,9 @@ jobs:
           VOICE = "en-US-AvaMultilingualNeural"
           RATE = "+2%"
           PITCH = "-2Hz"
+          SEGMENT_DURATION_TOLERANCE = 0.03
+          FINAL_DURATION_TOLERANCE = 0.05
+          EPISODES = [int(ep) for ep in os.environ["SPELLCRAFT_EPISODES"].split()]
           DATA = Path("spellcraft_narration")
           OUT = Path("narration_output")
           RAW = OUT / "raw"
@@ -173,7 +179,7 @@ jobs:
               return chunks or [clean]
 
           async def main():
-              all_rows = {ep: read_rows(ep) for ep in range(2, 9)}
+              all_rows = {ep: read_rows(ep) for ep in EPISODES}
               sem = asyncio.Semaphore(4)
 
               synth_tasks = []
@@ -249,7 +255,7 @@ jobs:
 
                       segment_paths.append(wav)
                       final_seg_dur = probe_duration(wav)
-                      if abs(final_seg_dur - target) > 0.03:
+                      if abs(final_seg_dur - target) > SEGMENT_DURATION_TOLERANCE:
                           raise RuntimeError(
                               f"Segment duration drift ep{ep} unit {row['unit']}: "
                               f"target={target:.6f}s actual={final_seg_dur:.6f}s"
@@ -315,10 +321,16 @@ jobs:
 
                   srt_path = OUT / f"Episode_{ep:02d}_Ava_Captions.srt"
                   srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
+                  final_audio_duration = probe_duration(final_mp3)
+                  if abs(final_audio_duration - total_target) > FINAL_DURATION_TOLERANCE:
+                      raise RuntimeError(
+                          f"Episode duration drift ep{ep}: "
+                          f"target={total_target:.6f}s actual={final_audio_duration:.6f}s"
+                      )
 
                   manifest["episodes"][str(ep)] = {
                       "target_duration": total_target,
-                      "final_audio_duration": probe_duration(final_mp3),
+                      "final_audio_duration": final_audio_duration,
                       "units": unit_manifest,
                       "audio": final_mp3.name,
                       "captions": srt_path.name,
@@ -336,13 +348,29 @@ jobs:
         run: |
           set -euo pipefail
           test -s "narration_output/Spellcraft_Ava_Narration_Manifest.json"
-          for ep in 02 03 04 05 06 07 08; do
+          for ep in $SPELLCRAFT_EPISODES; do
             test -s "narration_output/Episode_${ep}_Ava_Narration.mp3"
             test -s "narration_output/Episode_${ep}_Ava_Captions.srt"
             ffprobe -v error -show_entries format=duration \
               -of default=noprint_wrappers=1:nokey=1 \
               "narration_output/Episode_${ep}_Ava_Narration.mp3"
           done
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("narration_output/Spellcraft_Ava_Narration_Manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          expected = {str(int(ep)) for ep in os.environ["SPELLCRAFT_EPISODES"].split()}
+          actual = set(manifest.get("episodes", {}))
+          missing = sorted(expected - actual)
+          if missing:
+              raise SystemExit(f"Manifest missing episodes: {', '.join(missing)}")
+          PY
 
       - name: Upload narration package
         uses: actions/upload-artifact@v4
