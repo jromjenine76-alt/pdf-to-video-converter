@@ -35,13 +35,19 @@ jobs:
           pip install "openai>=1.40.0" >/dev/null
 
       - name: Generate Marin narration
+        id: generate_narration
         shell: bash
         run: |
-          test -n "$OPENAI_API_KEY" || (echo "OPENAI_API_KEY missing" && exit 2)
-          python - <<'PY'
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::OPENAI_API_KEY missing; skipping Marin narration build."
+            exit 0
+          fi
+          export GENERATION_STATUS_FILE="$RUNNER_TEMP/marin-generation-status.json"
+          if python - <<'PY'
           import gzip, json, os, re, subprocess
           from pathlib import Path
-          from openai import OpenAI
+          from openai import OpenAI, RateLimitError
 
           EP = int(os.environ["EPISODE"])
           MODEL = "gpt-4o-mini-tts"
@@ -53,12 +59,31 @@ jobs:
           RAW.mkdir(parents=True, exist_ok=True)
 
           client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+          STATUS_FILE = Path(os.environ["GENERATION_STATUS_FILE"])
 
           STYLE = (
               "Speak as the same warm, natural, human-like feminine educational narrator used for the approved "
               "Episode One. Smooth connected delivery, calm storytelling pace, clear pronunciation, expressive "
               "but restrained emphasis, no robotic cadence, no choppy pauses, and no exaggerated announcer tone."
           )
+
+          def billing_inactive_message(error):
+              body = getattr(error, "body", None)
+              if isinstance(body, dict):
+                  payload = body.get("error", {})
+                  if payload.get("code") == "billing_not_active":
+                      return payload.get("message") or "OpenAI billing is not active."
+              text = str(error)
+              if "billing_not_active" in text:
+                  return text
+              return None
+
+          def mark_skipped(message):
+              STATUS_FILE.write_text(
+                  json.dumps({"skip_reason": "billing_not_active", "message": message}),
+                  encoding="utf-8",
+              )
+              raise SystemExit(78)
 
           def run(cmd):
               subprocess.run(cmd, check=True)
@@ -151,6 +176,16 @@ jobs:
                           response.stream_to_file(wav)
                       if wav.exists() and wav.stat().st_size > 1000:
                           break
+                  except RateLimitError as error:
+                      message = billing_inactive_message(error)
+                      if message:
+                          if wav.exists():
+                              wav.unlink()
+                          mark_skipped(message)
+                      if wav.exists():
+                          wav.unlink()
+                      if attempt == 3:
+                          raise
                   except Exception:
                       if wav.exists():
                           wav.unlink()
@@ -217,8 +252,32 @@ jobs:
           manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
           print(json.dumps({"episode": EP, "duration": manifest["final_audio_duration"], "voice": VOICE}))
           PY
+          then
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [ "$status" -eq 78 ]; then
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              warning_message="$(python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          status_path = Path(os.environ["GENERATION_STATUS_FILE"])
+          if not status_path.exists():
+              print("OpenAI billing is not active for this repository key.")
+          else:
+              payload = json.loads(status_path.read_text(encoding="utf-8"))
+              print(payload.get("message") or "OpenAI billing is not active for this repository key.")
+          PY
+          )"
+              echo "::warning::${warning_message} Skipping Marin narration build."
+              exit 0
+            fi
+            exit "$status"
+          fi
 
       - name: Verify narration package
+        if: steps.generate_narration.outputs.skipped != 'true'
         shell: bash
         run: |
           ep=$(printf '%02d' "$EPISODE")
@@ -229,6 +288,7 @@ jobs:
             "marin_storytelling_output/Episode_${ep}_MARIN_Narration.wav"
 
       - name: Upload narration package
+        if: steps.generate_narration.outputs.skipped != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: spellcraft-episode-${{ matrix.episode }}-marin-storytelling
