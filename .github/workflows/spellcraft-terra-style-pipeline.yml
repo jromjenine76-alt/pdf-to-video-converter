@@ -99,11 +99,20 @@ jobs:
       - name: Build catalog
         run: python chapter_pipeline/build_catalog.py
 
+      - name: Compile Chapter 1 production code
+        run: |
+          python -m py_compile \
+            chapter_pipeline/render_chapter.py \
+            chapter_pipeline/cinematic_scene_renderer.py \
+            chapter_pipeline/cinematic_scene_renderer_v2.py \
+            chapter_pipeline/source_visual_reconstructions.py \
+            chapter_pipeline/kokoro_tts.py
+
       - name: Restore chapter checkpoints
         uses: actions/cache@v4
         with:
           path: .chapter_cache
-          key: spellcraft-c${{ matrix.chapter }}-${{ hashFiles('spellcraft_narration/**', 'chapter_pipeline/render_chapter.py', 'chapter_pipeline/cinematic_scene_renderer.py', 'chapter_pipeline/kokoro_tts.py', 'chapter_pipeline/VOICE_CONFIG.json') }}
+          key: spellcraft-c${{ matrix.chapter }}-${{ hashFiles('spellcraft_narration/**', 'chapter_pipeline/render_chapter.py', 'chapter_pipeline/cinematic_scene_renderer.py', 'chapter_pipeline/cinematic_scene_renderer_v2.py', 'chapter_pipeline/source_visual_reconstructions.py', 'chapter_pipeline/kokoro_tts.py', 'chapter_pipeline/VOICE_CONFIG.json') }}
           restore-keys: |
             spellcraft-c${{ matrix.chapter }}-
 
@@ -119,7 +128,7 @@ jobs:
             --kokoro-voices .kokoro/voices-v1.0.bin \
             --asset-dir chapter_pipeline/source_assets
 
-      - name: Verify chapter artifact contract, MP4, and locked voice
+      - name: Verify chapter artifact contract, MP4, locked voice, and visual source QA
         run: |
           chapter_mp4="chapter_output/chapter_$(printf '%03d' '${{ matrix.chapter }}').mp4"
           chapter_json="chapter_output/chapter_$(printf '%03d' '${{ matrix.chapter }}').json"
@@ -134,21 +143,29 @@ jobs:
           meta = json.loads(meta_path.read_text(encoding='utf-8'))
 
           required = {
-              'chapter', 'title', 'scenes', 'tentpole_motion_scenes',
+              'chapter', 'title', 'visual_version', 'scenes',
+              'dynamic_object_motion_scenes', 'tentpole_motion_scenes',
               'duration_seconds', 'video', 'voice_provider', 'voice',
-              'voice_locked', 'pipeline'
+              'voice_locked', 'real_source_assets_used',
+              'source_visual_reconstructions_used', 'pipeline'
           }
           missing = sorted(required - set(meta))
           assert not missing, f'metadata contract missing fields: {missing}'
           assert int(meta['chapter']) == int('${{ matrix.chapter }}')
           assert meta['video'] == video_path.name
+          assert meta['visual_version'] == 'source_reconstruction_v3'
           assert meta['voice_provider'] == 'kokoro'
           assert meta['voice'] == 'af_sarah'
           assert meta['voice_locked'] is True
           assert int(meta['scenes']) >= 1
           assert int(meta['tentpole_motion_scenes']) >= 1
+          assert int(meta['dynamic_object_motion_scenes']) >= 3
           assert float(meta['duration_seconds']) > 0
           assert 'sentence scene' in str(meta['pipeline'])
+
+          if int(meta['chapter']) == 1:
+              source_count = len(meta.get('real_source_assets_used', [])) + len(meta.get('source_visual_reconstructions_used', []))
+              assert source_count >= 4, f'Chapter 1 source-visual QA failed: only {source_count} source-specific visuals'
 
           probe = json.loads(subprocess.check_output([
               'ffprobe', '-v', 'error', '-show_streams', '-show_format',
@@ -168,8 +185,11 @@ jobs:
 
           print('artifact contract verified')
           print('locked voice verified:', meta['voice'])
+          print('visual version:', meta['visual_version'])
           print('cinematic scenes:', meta['scenes'])
-          print('tentpole scenes:', meta['tentpole_motion_scenes'])
+          print('dynamic object-motion scenes:', meta['dynamic_object_motion_scenes'])
+          print('source visuals:', meta['real_source_assets_used'])
+          print('source reconstructions:', meta['source_visual_reconstructions_used'])
           print('media verified: 1920x1080 H.264 + AAC')
           PY
 
@@ -184,7 +204,6 @@ jobs:
 
   assemble-preview:
     needs: render-chapter
-    # Do not create a second, confusing failure if any selected chapter failed.
     if: ${{ needs.render-chapter.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
