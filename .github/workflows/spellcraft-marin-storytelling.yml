@@ -279,19 +279,7 @@ jobs:
           PY
           )"
               printf 'OpenAI billing response: %s\n' "$warning_message"
-              escaped_warning_message="$(WARNING_MESSAGE="$warning_message" python - <<'PY'
-          import os
-
-          message = os.environ["WARNING_MESSAGE"]
-          message = (
-              message.replace("%", "%25")
-              .replace("\r", "%0D")
-              .replace("\n", "%0A")
-          )
-          print(message)
-          PY
-          )"
-              echo "::warning::${escaped_warning_message} Skipping Marin narration build."
+              echo "::warning::${warning_message} Skipping Marin narration build."
               exit 0
             fi
             exit "$status"
