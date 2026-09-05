@@ -186,7 +186,12 @@ jobs:
                           wav.unlink()
                       if attempt == 3:
                           raise
-                  except Exception:
+                  except Exception as error:
+                      message = billing_inactive_message(error)
+                      if message:
+                          if wav.exists():
+                              wav.unlink()
+                          mark_skipped(message)
                       if wav.exists():
                           wav.unlink()
                       if attempt == 3:
