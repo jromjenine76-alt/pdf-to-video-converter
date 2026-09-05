@@ -177,17 +177,21 @@ jobs:
               sem = asyncio.Semaphore(4)
 
               synth_tasks = []
+              synth_targets = {}
               for ep, rows in all_rows.items():
                   for row in rows:
-                      synth_tasks.append(asyncio.create_task(synth_one(ep, row, sem)))
+                      task = asyncio.create_task(synth_one(ep, row, sem))
+                      synth_tasks.append(task)
+                      synth_targets[task] = RAW / f"ep{ep:02d}_unit_{row['unit']:02d}.mp3"
               try:
                   await asyncio.gather(*synth_tasks)
               except Exception:
                   for task in synth_tasks:
                       task.cancel()
                   await asyncio.gather(*synth_tasks, return_exceptions=True)
-                  for path in RAW.glob("*.mp3"):
-                      path.unlink()
+                  for task, target in synth_targets.items():
+                      if (task.cancelled() or task.exception() is not None) and target.exists():
+                          target.unlink()
                   raise
 
               manifest = {
@@ -331,6 +335,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -s "narration_output/Spellcraft_Ava_Narration_Manifest.json"
           for ep in 02 03 04 05 06 07 08; do
             test -s "narration_output/Episode_${ep}_Ava_Narration.mp3"
             test -s "narration_output/Episode_${ep}_Ava_Captions.srt"
