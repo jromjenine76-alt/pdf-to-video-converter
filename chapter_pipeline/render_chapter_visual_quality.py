@@ -8,7 +8,7 @@ import render_chapter as rc
 from asset_ingest import canonicalize_asset
 
 ASSET_DIR = Path('chapter_pipeline/source_assets')
-PREFLIGHT_DIR = Path('.chapter_asset_preflight')
+PREFLIGHT_DIR = Path('.chapter_asset_preflight_v5')
 REQUIRED = {
     'lo_scarabeo_tools.jpg',
     'wyspell_candle_colors.jpg',
@@ -19,7 +19,13 @@ REQUIRED = {
 
 
 def install_user_assets() -> list[str]:
-    """Fully decode/salvage required visuals before scene 1 so a bad JPEG cannot fail mid-render."""
+    """Decode and visually validate required visuals before scene 1.
+
+    A JPEG can be structurally readable while its recovered pixels are effectively a
+    black rectangle.  v5 uses canonicalize_asset's pixel-health check so those files
+    are rejected before the long render and the normal source-specific reconstruction
+    path can take over instead of putting an empty card on screen.
+    """
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     good: list[str] = []
     bad: list[str] = []
@@ -32,27 +38,24 @@ def install_user_assets() -> list[str]:
         clean = canonicalize_asset(target, PREFLIGHT_DIR)
         if clean:
             good.append(name)
-            print(f'preflight OK: {name} -> {clean.name}', flush=True)
+            print(f'preflight visual-health OK: {name} -> {clean.name}', flush=True)
         else:
             bad.append(name)
-            print(f'preflight rejected source visual: {name}', flush=True)
+            print(f'preflight visually rejected source visual: {name}', flush=True)
 
     if len(good) < 3:
         raise SystemExit(
             f'Visual asset preflight stopped before render: only {len(good)} usable source visuals; bad/missing={bad}'
         )
-    print(f'asset preflight passed before render: {len(good)}/{len(REQUIRED)} usable', flush=True)
+    print(f'asset preflight passed before render: {len(good)}/{len(REQUIRED)} visually usable; rejected={bad}', flush=True)
     return good
 
 
 _original_choose = rc.choose_source_asset
 _vq_scene_number = 0
 
-# Deterministic Chapter 1 showcase anchors. These are deliberately tied to scene kinds
-# already observed in the Chapter 1 proof render: scene 3 is a kit beat, scene 15 is a
-# flame beat, and scene 52 is a kit/reference beat. This guarantees that the three
-# WYSPELL visuals are actually exercised by the finished proof instead of merely
-# passing preflight and then never being selected by narrow keyword routing.
+# Deterministic Chapter 1 showcase anchors.  They test the same representative beats
+# as v4, but v5 no longer lets a merely decodable black/corrupt image pass through.
 SHOWCASE_ANCHORS = {
     3: 'wyspell_kit_box.jpg',
     15: 'wyspell_in_action.jpg',
@@ -71,9 +74,6 @@ def choose_visual_quality_asset(text: str, asset_dir: Path) -> Path | None:
     def pick(name: str) -> Path | None:
         return files.get(name.lower())
 
-    # Keep source usage deterministic for this proof so the QA gate measures the
-    # converter's ability to render the pack, not whether a particular sentence
-    # happened to contain one narrow routing keyword.
     forced = SHOWCASE_ANCHORS.get(_vq_scene_number)
     if forced:
         p = pick(forced)
@@ -104,8 +104,6 @@ def choose_visual_quality_asset(text: str, asset_dir: Path) -> Path | None:
         if p:
             return p
 
-    # Broader semantic routing for Chapter 1. This keeps the WYSPELL material visible
-    # even when the prose discusses the concept without repeating the WYSPELL brand name.
     if any(k in t for k in ('guide', 'manual', 'reference', 'meaning', 'correspondence', 'instruction')):
         p = pick('wyspell_guide_pages.jpg')
         if p:
@@ -125,7 +123,7 @@ def choose_visual_quality_asset(text: str, asset_dir: Path) -> Path | None:
 def main() -> None:
     install_user_assets()
     rc.choose_source_asset = choose_visual_quality_asset
-    rc.VISUAL_VERSION = 'user_source_visuals_v4'
+    rc.VISUAL_VERSION = 'user_source_visuals_v5'
     rc.main()
 
 
