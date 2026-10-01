@@ -1,0 +1,37 @@
+name: Workflow Validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
+      - name: Install actionlint
+        run: |
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tar.gz" > /tmp/actionlint.sha256
+          curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o /tmp/actionlint.tar.gz
+          sha256sum --check /tmp/actionlint.sha256
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          sudo install /tmp/actionlint /usr/local/bin/actionlint
+
+      - name: Lint workflows
+        run: actionlint -color
