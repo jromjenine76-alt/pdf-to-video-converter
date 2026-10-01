@@ -28,7 +28,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from pydantic import BaseModel, Field
 
 
-SCRIPT_MODEL = "gpt-5.4-mini"
+SCRIPT_MODEL = "gpt-4o-mini"
 SPEECH_MODEL = "gpt-4o-mini-tts"
 MAX_PAGES_PER_RUN = 50
 SCRIPT_BATCH_SIZE = 8
