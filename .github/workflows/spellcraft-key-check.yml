@@ -4,22 +4,19 @@ on:
   push:
     branches:
       - spellcraft-voice-bridge
-    paths:
-      - '.github/workflows/spellcraft-key-check.yml'
 
 jobs:
   check-key:
     runs-on: ubuntu-latest
     permissions: {}
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - name: Check OpenAI key availability
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         shell: bash
         run: |
           if [ -n "$OPENAI_API_KEY" ]; then
-            echo "OPENAI_API_KEY_PRESENT=true"
+            echo "OPENAI_API_KEY is configured for this repository."
           else
-            echo "OPENAI_API_KEY_PRESENT=false"
             echo "::warning::OPENAI_API_KEY is not configured for this repository."
           fi
